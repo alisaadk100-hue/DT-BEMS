@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 from streamlit_autorefresh import st_autorefresh
 
 # 1. PAGE CONFIG
@@ -25,19 +25,11 @@ def go_to_page(p, param=None):
     st.session_state.page = p
     st.session_state.selected_param = param
 
-# --- UI ENHANCEMENTS ---
+# --- UI STYLING ---
 st.markdown("""
     <style>
-    .main { background-color: #0e1117; }
-    div[data-testid="stMetric"] {
-        background-color: rgba(255, 255, 255, 0.03);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        padding: 20px;
-        border-radius: 15px;
-        transition: 0.3s;
-    }
-    div[data-testid="stMetric"]:hover { border: 1px solid #00CC96; background-color: rgba(0, 204, 150, 0.05); }
-    .stButton>button { border-radius: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+    .stDateInput>div>div>input { background-color: #1f1f1f; color: #00CC96; border: 1px solid #00CC96; border-radius: 10px; }
+    div[data-testid="stMetric"] { background-color: rgba(255, 255, 255, 0.03); border-radius: 15px; padding: 20px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -47,7 +39,7 @@ try:
 
     if st.session_state.page == 'Home':
         st.title("⚡ BEMS Digital Twin")
-        st.caption(f"Network Status: Online | Last Packet: {latest['Timestamp'].strftime('%H:%M:%S')}")
+        st.caption(f"Status: Online | Last Packet: {latest['Timestamp'].strftime('%H:%M:%S')}")
         
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -66,65 +58,54 @@ try:
 
     else:
         param = st.session_state.selected_param
-        st.button("← Back to Dashboard", on_click=go_to_page, args=('Home',))
-        st.title(f"📊 {param} Analytics")
+        col_back, col_date = st.columns([1, 1])
+        with col_back:
+            st.button("← Back to Dashboard", on_click=go_to_page, args=('Home',))
+        
+        # --- THE TIME TRAVEL SELECTOR ---
+        with col_date:
+            selected_date = st.date_input("📅 Select Date for Analysis", value=datetime.now().date())
+        
+        st.title(f"📊 {param}: {selected_date.strftime('%b %d, %Y')}")
+        
+        # FILTER DATA BY SELECTED DATE
+        day_df = df[df['Timestamp'].dt.date == selected_date].copy()
         
         unit_map = {"Voltage": "V", "Current": "A", "Power": "W", "Consumption": "kWh"}
         color_map = {"Voltage": "#FF4B4B", "Current": "#636EFA", "Power": "#00CC96", "Consumption": "#FFAA00"}
         unit, color = unit_map.get(param, ""), color_map.get(param, "#00ff00")
 
-        if param == "Consumption":
-            t1, t2, t3, t4 = st.tabs(["Hourly Units", "Daily History", "Weekly Trend", "Monthly Overview"])
-            for tab, (res, dt_tick) in zip([t1, t2, t3, t4], [('H', 3600000), ('D', 86400000), ('W', None), ('ME', None)]):
-                with tab:
-                    res_df = df.resample(res, on='Timestamp').agg({'kWh_Interval':'sum'}).reset_index()
-                    fig = go.Figure(go.Bar(x=res_df['Timestamp'], y=res_df['kWh_Interval'], marker_color=color))
-                    fig.update_layout(template="plotly_dark", hovermode="x unified", xaxis=dict(dtick=dt_tick))
-                    st.plotly_chart(fig, use_container_width=True)
+        if day_df.empty:
+            st.warning(f"No data available for {selected_date}. Please select another date.")
         else:
-            t1, t2, t3 = st.tabs(["Live Pulse (1-Min)", "Hourly Peak Trend", "Daily Stability"])
-            for tab, res in zip([t1, t2, t3], [None, 'H', 'D']):
-                with tab:
-                    if res:
-                        # PEAK-HOLD LOGIC: Using .max() instead of .mean() for accuracy
-                        plot_df = df.resample(res, on='Timestamp').agg({param:'max'}).reset_index()
-                        dt_tick = 3600000 if res == 'H' else 86400000
-                    else:
-                        plot_df = df
-                        dt_tick = None
-
-                    fig = go.Figure()
-                    # Add the main curve
-                    fig.add_trace(go.Scatter(
-                        x=plot_df['Timestamp'], y=plot_df[param],
-                        mode='lines+markers' if res else 'lines',
-                        line=dict(color=color, width=3, shape='spline'),
-                        fill='tozeroy',
-                        hovertemplate = f"<b>{param}:</b> %{{y:.2f}} {unit}<extra></extra>"
-                    ))
-
-                    # ADD PEAK MARKER (The Max Value Point)
-                    peak_idx = plot_df[param].idxmax()
-                    peak_val = plot_df[param].max()
-                    peak_time = plot_df['Timestamp'][peak_idx]
+            if param == "Consumption":
+                t1, t2 = st.tabs(["Hourly Units (Selected Day)", "Historical Daily Trend"])
+                with t1:
+                    h_df = day_df.resample('H', on='Timestamp').agg({'kWh_Interval':'sum'}).reset_index()
+                    fig = go.Figure(go.Bar(x=h_df['Timestamp'], y=h_df['kWh_Interval'], marker_color=color))
+                    fig.update_layout(template="plotly_dark", xaxis=dict(dtick=3600000, tickformat="%H:%M"), title="Hourly Consumption for Selected Day")
+                    st.plotly_chart(fig, use_container_width=True)
+                with t2:
+                    all_d_df = df.resample('D', on='Timestamp').agg({'kWh_Interval':'sum'}).reset_index()
+                    st.plotly_chart(go.Figure(go.Bar(x=all_d_df['Timestamp'], y=all_d_df['kWh_Interval'], marker_color="#555")).update_layout(template="plotly_dark", title="Total Daily History"))
+            
+            else:
+                t1, t2 = st.tabs(["Minute-wise (High Res)", "Hourly Peak Trend"])
+                with t1:
+                    fig = go.Figure(go.Scatter(x=day_df['Timestamp'], y=day_df[param], mode='lines', line=dict(color=color, width=3, shape='spline'), fill='tozeroy'))
                     
-                    fig.add_annotation(x=peak_time, y=peak_val, text=f"PEAK: {peak_val:.1f}{unit}",
-                                     showarrow=True, arrowhead=1, bgcolor=color, font=dict(color="black"))
-
-                    fig.update_layout(
-                        template="plotly_dark", 
-                        hovermode="x unified",
-                        xaxis=dict(
-                            showgrid=False,
-                            dtick=dt_tick, # Force hourly ticks
-                            tickformat="%H:%M\n%b %d" if res == 'H' else "%b %d",
-                            rangeselector=dict(buttons=list([
-                                dict(count=6, label="6h", step="hour", stepmode="backward"),
-                                dict(count=24, label="1d", step="hour", stepmode="backward"),
-                                dict(step="all")
-                            ]), bgcolor="rgba(0,0,0,0.5)")
-                        )
-                    )
+                    # Highlight Peak for the Day
+                    peak_val = day_df[param].max()
+                    peak_time = day_df.loc[day_df[param].idxmax(), 'Timestamp']
+                    fig.add_annotation(x=peak_time, y=peak_val, text=f"DAY PEAK: {peak_val:.1f}{unit}", showarrow=True, bgcolor=color, font=dict(color="black"))
+                    
+                    fig.update_layout(template="plotly_dark", hovermode="x unified", title=f"1-Minute Interval: {param}", xaxis=dict(tickformat="%H:%M"))
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with t2:
+                    h_df = day_df.resample('H', on='Timestamp').agg({param:'max'}).reset_index()
+                    fig = go.Figure(go.Scatter(x=h_df['Timestamp'], y=h_df[param], mode='lines+markers', line=dict(color=color, width=2)))
+                    fig.update_layout(template="plotly_dark", xaxis=dict(dtick=3600000, tickformat="%H:%M"), title="Hourly Max Values (Selected Day)")
                     st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e:
