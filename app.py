@@ -3,76 +3,73 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime
 
-# Set page to wide mode and dark theme
 st.set_page_config(page_title="BEMS Digital Twin", layout="wide")
 
-# 1. SETUP
+# Replace with your link
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRP4yZn_0PQCRB9xZcNm9bKMv6vZhk6P9kjEFX6iuXh-71ExjMWK6uRLqnZ12BgKJDtwo8a8jYRXPAf/pubhtml"
 
-@st.cache_data(ttl=30) # Refresh every 30 seconds
+@st.cache_data(ttl=10) # Fast refresh for debugging
 def load_data():
+    # Load data and skip bad lines
     df = pd.read_csv(SHEET_URL, on_bad_lines='skip', skip_blank_lines=True)
-    df.columns = df.columns.str.strip() # Remove accidental spaces
-    df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+    
+    # CLEANING: Remove spaces from column names
+    df.columns = [str(col).strip() for col in df.columns]
+    
+    # AUTO-DETECT TIMESTAMP: If 'Timestamp' isn't found, use the first column
+    if 'Timestamp' not in df.columns:
+        df = df.rename(columns={df.columns[0]: 'Timestamp'})
+    
+    df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+    df = df.dropna(subset=['Timestamp']) # Remove broken rows
+    
+    # Ensure all numeric columns are actually numbers
+    for col in ['Voltage', 'Current', 'Power', 'kWh_Interval']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            
     return df
 
 try:
     df = load_data()
     
-    # CALCULATIONS
+    # 1. METRICS CALCULATION
     latest = df.iloc[-1]
-    today = datetime.now().date()
-    df_today = df[df['Timestamp'].dt.date == today]
-    today_kwh = df_today['kWh_Interval'].sum()
+    today_kwh = df[df['Timestamp'].dt.date == datetime.now().date()]['kWh_Interval'].sum()
 
-    # --- TOP SECTION: LIVE INTERACTIVE CARDS ---
     st.title("⚡ BEMS: Live Digital Twin")
     
-    # We use columns for the clean, "app-like" look
+    # Clean UI Cards
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Live Voltage", f"{latest['Voltage']} V")
-    c2.metric("Live Current", f"{latest['Current']} A")
-    c3.metric("Live Power", f"{latest['Power']} W")
-    # This shows today's consumption specifically
-    c4.metric("Today's Units", f"{today_kwh:.4f} kWh", delta="Today")
+    c1.metric("Voltage", f"{latest.get('Voltage', 0)} V")
+    c2.metric("Current", f"{latest.get('Current', 0)} A")
+    c3.metric("Power", f"{latest.get('Power', 0)} W")
+    c4.metric("Today's Energy", f"{today_kwh:.4f} kWh")
 
     st.divider()
 
-    # --- MIDDLE SECTION: HISTORICAL DRILL-DOWN ---
-    st.subheader("📊 Interactive Consumption History")
-    
-    # Create tabs for different views
-    tab1, tab2, tab3 = st.tabs(["🕒 Real-time (1-Min)", "📅 Hourly Stats", "📈 Daily History"])
+    # 2. INTERACTIVE TABS
+    t1, t2, t3 = st.tabs(["🕒 Minute-wise", "📅 Hourly", "📈 Daily History"])
 
-    with tab1:
-        # Minute-wise graph with range slider (swiping)
-        fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(x=df['Timestamp'], y=df['Power'], fill='tozeroy', name='Power (W)'))
+    with t1:
+        fig1 = go.Figure(go.Scatter(x=df['Timestamp'], y=df['Power'], fill='tozeroy', name='Power'))
         fig1.update_layout(title="Live Power Pulse", xaxis_rangeslider_visible=True, template="plotly_dark")
         st.plotly_chart(fig1, use_container_width=True)
 
-    with tab2:
-        # Hourly Aggregation
-        hourly_df = df.resample('H', on='Timestamp').agg({'Power':'mean', 'kWh_Interval':'sum'}).reset_index()
-        fig2 = go.Figure()
-        fig2.add_trace(go.Bar(x=hourly_df['Timestamp'], y=hourly_df['kWh_Interval'], name='kWh'))
-        fig2.update_layout(title="Hourly Energy Consumption", xaxis_rangeslider_visible=True, template="plotly_dark")
+    with t2:
+        h_df = df.resample('H', on='Timestamp').agg({'Power':'mean', 'kWh_Interval':'sum'}).reset_index()
+        fig2 = go.Figure(go.Bar(x=h_df['Timestamp'], y=h_df['kWh_Interval'], name='kWh'))
+        fig2.update_layout(title="Hourly Energy", xaxis_rangeslider_visible=True, template="plotly_dark")
         st.plotly_chart(fig2, use_container_width=True)
 
-    with tab3:
-        # Daily Aggregation
-        daily_df = df.resample('D', on='Timestamp').agg({'Power':'mean', 'kWh_Interval':'sum'}).reset_index()
-        fig3 = go.Figure()
-        fig3.add_trace(go.Bar(x=daily_df['Timestamp'], y=daily_df['kWh_Interval'], name='Total Daily kWh'))
-        fig3.update_layout(title="Daily Energy Usage", xaxis_rangeslider_visible=True, template="plotly_dark")
-        st.plotly_chart(fig3, use_container_width=True)
-
-    # --- BOTTOM SECTION: DATA TABLE ---
-    with st.expander("See Raw Data Log"):
-        st.dataframe(df.sort_values(by='Timestamp', ascending=False), use_container_width=True)
+    with t3:
+        d_df = df.resample('D', on='Timestamp').agg({'Power':'mean', 'kWh_Interval':'sum'}).reset_index()
+        st.bar_chart(data=d_df, x='Timestamp', y='kWh_Interval')
 
 except Exception as e:
-    st.error("⚠️ Dashboard Sync Error")
-    st.info("Check if your Google Sheet has headers: Timestamp, Voltage, Current, Power, Temp, kWh_Interval")
-    # Show the actual error for debugging
-    st.write(f"Technical Details: {e}")
+    st.error("⚠️ System Syncing...")
+    st.write("Checking your data structure...")
+    # DEBUG BOX: This will tell us exactly what's wrong
+    tmp_df = pd.read_csv(SHEET_URL, nrows=1)
+    st.write("I found these columns in your sheet:", list(tmp_df.columns))
+    st.info("Make sure your Google Sheet headers are in the VERY FIRST ROW.")
