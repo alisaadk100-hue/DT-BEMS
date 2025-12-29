@@ -6,7 +6,7 @@ from datetime import datetime
 st.set_page_config(page_title="BEMS Digital Twin", layout="wide")
 
 # Replace with your link
-SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRP4yZn_0PQCRB9xZcNm9bKMv6vZhk6P9kjEFX6iuXh-71ExjMWK6uRLqnZ12BgKJDtwo8a8jYRXPAf/pubhtml"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRP4yZn_0PQCRB9xZcNm9bKMv6vZhk6P9kjEFX6iuXh-71ExjMWK6uRLqnZ12BgKJDtwo8a8jYRXPAf/pub?gid=0&single=true&output=csv"
 
 @st.cache_data(ttl=10) # Fast refresh for debugging
 def load_data():
@@ -73,3 +73,4 @@ except Exception as e:
     tmp_df = pd.read_csv(SHEET_URL, nrows=1)
     st.write("I found these columns in your sheet:", list(tmp_df.columns))
     st.info("Make sure your Google Sheet headers are in the VERY FIRST ROW.")
+
