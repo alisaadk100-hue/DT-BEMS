@@ -67,3 +67,4 @@ except Exception as e:
     st.error("🔗 Connection Error: Check your 'Publish to Web' link")
     st.write("Ensure you selected 'Comma-separated values (.csv)' when publishing.")
     st.info(f"Technical Note: {e}")
+
