@@ -4,7 +4,6 @@ import plotly.graph_objects as go
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
-# 1. SETUP
 st.set_page_config(page_title="BEMS Digital Twin", layout="wide", initial_sidebar_state="collapsed")
 st_autorefresh(interval=60 * 1000, key="bems_heartbeat")
 
@@ -12,7 +11,9 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRP4yZn_0PQCRB9xZcN
 
 @st.cache_data(ttl=15)
 def load_data():
-    df = pd.read_csv(SHEET_URL, on_bad_lines='skip', engine='python')
+    # We use 'header=0' to ensure Streamlit reads your Row 1 as column names
+    df = pd.read_csv(SHEET_URL, on_bad_lines='skip', engine='python', header=0)
+    # This removes any accidental spaces in your Google Sheet headers
     df.columns = [str(col).strip() for col in df.columns]
     df['Timestamp'] = pd.to_datetime(df['Timestamp'])
     return df
@@ -30,67 +31,65 @@ try:
 
     # --- LAYER 1: OVERVIEW ---
     if st.session_state.page == 'Home':
-        st.title("⚡ BEMS Digital Twin: Overview")
+        st.title("⚡ BEMS Digital Twin")
         
-        # ADDED TEMPERATURE ALERT
-        temp_val = float(latest.get('Temp', 0))
-        if temp_val > 70:
-            st.error(f"🔥 THERMAL ALARM: Breaker Temperature at {temp_val}°C!")
+        # Check for Temp in headers
+        t_val = float(latest['Temp']) if 'Temp' in latest else 0.0
         
-        c1, c2, c3, c4, c5 = st.columns(5) # Added 5th column
+        if t_val > 65: st.error(f"🚨 OVERHEAT: {t_val}°C")
+        
+        c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
             st.metric("Voltage", f"{latest['Voltage']:.1f} V")
-            st.button("Voltage →", on_click=go_to_page, args=('Detail', 'Voltage'), use_container_width=True)
+            st.button("Analyze V", on_click=go_to_page, args=('Detail', 'Voltage'), use_container_width=True)
         with c2:
             st.metric("Current", f"{latest['Current']:.2f} A")
-            st.button("Current →", on_click=go_to_page, args=('Detail', 'Current'), use_container_width=True)
+            st.button("Analyze I", on_click=go_to_page, args=('Detail', 'Current'), use_container_width=True)
         with c3:
             st.metric("Power", f"{int(latest['Power'])} W")
-            st.button("Power →", on_click=go_to_page, args=('Detail', 'Power'), use_container_width=True)
+            st.button("Analyze P", on_click=go_to_page, args=('Detail', 'Power'), use_container_width=True)
         with c4:
-            st.metric("Temp", f"{temp_val:.1f} °C")
-            st.button("Thermal →", on_click=go_to_page, args=('Detail', 'Temp'), use_container_width=True)
+            st.metric("Temp", f"{t_val:.1f} °C")
+            st.button("Analyze T", on_click=go_to_page, args=('Detail', 'Temp'), use_container_width=True)
         with c5:
+            # We use 'kWh_Interval' as the internal key for Consumption
             today_kwh = df[df['Timestamp'].dt.date == datetime.now().date()]['kWh_Interval'].sum()
-            st.metric("Today", f"{today_kwh:.3f} kWh")
-            st.button("Energy →", on_click=go_to_page, args=('Detail', 'Consumption'), use_container_width=True)
+            st.metric("Energy", f"{today_kwh:.3f} kWh")
+            st.button("Analyze E", on_click=go_to_page, args=('Detail', 'Consumption'), use_container_width=True)
 
     # --- LAYER 2: DETAIL ---
     else:
         param = st.session_state.selected_param
-        col_back, col_date = st.columns([1, 1])
-        with col_back: st.button("← Back", on_click=go_to_page, args=('Home',))
-        with col_date: selected_date = st.date_input("📅 Date", value=datetime.now().date())
+        st.button("← Back", on_click=go_to_page, args=('Home',))
         
-        day_df = df[df['Timestamp'].dt.date == selected_date].copy()
+        # Logic to map 'Consumption' button to 'kWh_Interval' column
+        col_to_use = 'kWh_Interval' if param == 'Consumption' else param
         
-        # MAPPING FIX: Link 'Consumption' to 'kWh_Interval'
-        target_col = 'kWh_Interval' if param == 'Consumption' else param
-        unit = "kWh" if param == 'Consumption' else ("°C" if param == 'Temp' else "") # Add logic for other units
-        color = "#FFAA00" if param == 'Consumption' else "#FF4B4B"
-
-        if day_df.empty:
-            st.warning("No data found for this date.")
+        # Check if the column actually exists in the sheet
+        if col_to_use not in df.columns:
+            st.error(f"Column '{col_to_use}' not found in Google Sheet. Check your headers!")
         else:
-            # STATS BAR
-            s1, s2, s3 = st.columns(3)
-            s1.metric(f"Peak {param}", f"{day_df[target_col].max():.2f}")
-            s2.metric(f"Avg {param}", f"{day_df[target_col].mean():.2f}")
-            s3.metric(f"Min {param}", f"{day_df[target_col].min():.2f}")
-
-            if param == "Consumption":
-                t1, t2 = st.tabs(["Hourly", "Daily"])
-                with t1:
-                    h_df = day_df.resample('H', on='Timestamp').agg({'kWh_Interval':'sum'}).reset_index()
-                    st.plotly_chart(go.Figure(go.Bar(x=h_df['Timestamp'], y=h_df['kWh_Interval'], marker_color=color)).update_layout(template="plotly_dark", title="Hourly Units"))
+            selected_date = st.date_input("Select Date", value=datetime.now().date())
+            day_df = df[df['Timestamp'].dt.date == selected_date].copy()
+            
+            if day_df.empty:
+                st.warning("No data for this date.")
             else:
-                t1, t2 = st.tabs(["Pulse", "Hourly Trend"])
-                with t1:
-                    fig = go.Figure(go.Scatter(x=day_df['Timestamp'], y=day_df[target_col], mode='lines', line=dict(color=color, shape='spline'), fill='tozeroy'))
-                    st.plotly_chart(fig.update_layout(template="plotly_dark", title=f"High-Res {param}"), use_container_width=True)
-                with t2:
-                    h_df = day_df.resample('H', on='Timestamp').agg({target_col:'max'}).reset_index()
-                    st.plotly_chart(go.Figure(go.Scatter(x=h_df['Timestamp'], y=h_df[target_col], line=dict(color=color))).update_layout(template="plotly_dark", title=f"Hourly Peak {param}"))
+                # Summary Stats
+                s1, s2, s3 = st.columns(3)
+                s1.info(f"**Max**: {day_df[col_to_use].max():.2f}")
+                s2.info(f"**Avg**: {day_df[col_to_use].mean():.2f}")
+                s3.info(f"**Min**: {day_df[col_to_use].min():.2f}")
+
+                # Graphs
+                fig = go.Figure()
+                if param == "Consumption":
+                    h_df = day_df.resample('H', on='Timestamp').agg({'kWh_Interval':'sum'}).reset_index()
+                    fig.add_trace(go.Bar(x=h_df['Timestamp'], y=h_df['kWh_Interval'], marker_color="#FFAA00"))
+                else:
+                    fig.add_trace(go.Scatter(x=day_df['Timestamp'], y=day_df[col_to_use], mode='lines', line=dict(shape='spline', width=3), fill='tozeroy'))
+                
+                st.plotly_chart(fig.update_layout(template="plotly_dark", title=f"{param} Analysis"), use_container_width=True)
 
 except Exception as e:
-    st.error(f"Syncing Error: {e}")
+    st.error(f"Detailed Sync Error: {e}")
