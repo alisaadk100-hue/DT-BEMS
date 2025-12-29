@@ -5,68 +5,68 @@ from datetime import datetime
 
 st.set_page_config(page_title="BEMS Digital Twin", layout="wide")
 
-# 1. DATA LOADING
 # Replace with your 'Publish to Web' CSV link
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRP4yZn_0PQCRB9xZcNm9bKMv6vZhk6P9kjEFX6iuXh-71ExjMWK6uRLqnZ12BgKJDtwo8a8jYRXPAf/pubhtml"
 
-@st.cache_data(ttl=60) # Refreshes every minute
+@st.cache_data(ttl=60)
 def load_data():
-    df = pd.read_csv(SHEET_URL)
-    df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+    # 'on_bad_lines' skips the row that caused your error
+    # 'skip_blank_lines' ignores those empty rows at the bottom
+    df = pd.read_csv(SHEET_URL, on_bad_lines='skip', skip_blank_lines=True, engine='python')
+    
+    # Clean up column names and convert time
+    df.columns = df.columns.str.strip()
+    df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+    
+    # Drop rows where timestamp or power is missing
+    df = df.dropna(subset=['Timestamp', 'Power'])
     return df
 
 try:
     df = load_data()
     latest = df.iloc[-1]
     
-    # 2. HEADER & LIVE STATS
-    st.title("⚡ BEMS Live Dashboard")
+    # --- SECTION 1: LIVE INTERACTIVE METRICS ---
+    st.title("⚡ BEMS Digital Twin: Live Feed")
     
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Voltage", f"{latest['Voltage']} V")
-    col2.metric("Current", f"{latest['Current']} A")
-    col3.metric("Live Power", f"{latest['Power']} W")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Live Voltage", f"{latest['Voltage']} V")
+    m2.metric("Live Current", f"{latest['Current']} A")
+    m3.metric("Live Power", f"{latest['Power']} W")
     
-    # Calculate Today's kWh
-    today = datetime.now().date()
-    df_today = df[df['Timestamp'].dt.date == today]
-    today_kwh = df_today['kWh_Interval'].sum()
-    col4.metric("Today's Energy", f"{today_kwh:.2f} kWh", delta_color="inverse")
+    # Calculate Today's Energy
+    today_mask = df['Timestamp'].dt.date == datetime.now().date()
+    today_kwh = df.loc[today_mask, 'kWh_Interval'].sum()
+    m4.metric("Today's Total", f"{today_kwh:.2f} kWh")
 
     st.divider()
 
-    # 3. INTERACTIVE ANALYTICS SECTION
-    st.subheader("📊 Historical Analysis & Trends")
+    # --- SECTION 2: INTERACTIVE DRILL-DOWN ---
+    st.subheader("📊 Historical Energy Analysis")
     
-    # Selection for Time Granularity
-    view_option = st.radio(
-        "Select Graph Resolution:",
-        ["Minute-wise (Raw)", "Hourly Aggregated", "Daily Aggregated"],
-        horizontal=True
-    )
-
-    # Selection for Parameter
-    param_option = st.selectbox("Select Parameter to View:", ["Power (W)", "Voltage (V)", "Current (A)", "kWh"])
-    param_map = {"Power (W)": "Power", "Voltage (V)": "Voltage", "Current (A)": "Current", "kWh": "kWh_Interval"}
-
-    # Processing Data based on selection
-    if view_option == "Hourly Aggregated":
-        plot_df = df.resample('H', on='Timestamp').mean() if param_option != "kWh" else df.resample('H', on='Timestamp').sum()
-        plot_df = plot_df.reset_index()
-    elif view_option == "Daily Aggregated":
-        plot_df = df.resample('D', on='Timestamp').mean() if param_option != "kWh" else df.resample('D', on='Timestamp').sum()
-        plot_df = plot_df.reset_index()
+    # User selects the "View"
+    view_mode = st.radio("Resolution:", ["Real-time (Minutes)", "Hourly Stats", "Daily History"], horizontal=True)
+    
+    # Aggregation Logic
+    if view_mode == "Hourly Stats":
+        plot_df = df.resample('H', on='Timestamp').agg({'Power':'mean', 'kWh_Interval':'sum'}).reset_index()
+        y_axis = 'kWh_Interval'
+    elif view_mode == "Daily History":
+        plot_df = df.resample('D', on='Timestamp').agg({'Power':'mean', 'kWh_Interval':'sum'}).reset_index()
+        y_axis = 'kWh_Interval'
     else:
         plot_df = df
+        y_axis = 'Power'
 
-    # Plotting
-    fig = px.line(plot_df, x='Timestamp', y=param_map[param_option], 
-                  title=f"{param_option} - {view_option}",
-                  template="plotly_dark")
+    # Interactive Plotly Graph
+    fig = px.area(plot_df, x='Timestamp', y=y_axis, 
+                  title=f"{view_mode} Consumption Pattern",
+                  template="plotly_dark", color_discrete_sequence=['#00CC96'])
     
-    # Enable range slider for "Swiping" through history
+    # This enables the "Swiping/Zooming" functionality
     fig.update_xaxes(rangeslider_visible=True)
     st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e:
-    st.error(f"Waiting for data... Ensure your Sheet is 'Published to Web'. Error: {e}")
+    st.warning("Dashboard is updating... Please wait 30 seconds.")
+    st.info(f"Technical Note: {e}")
