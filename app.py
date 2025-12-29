@@ -25,94 +25,105 @@ def go_to_page(p, param=None):
     st.session_state.page = p
     st.session_state.selected_param = param
 
-# --- DATA PROCESSING ---
+# --- UI ENHANCEMENTS ---
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    div[data-testid="stMetric"] {
+        background-color: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 20px;
+        border-radius: 15px;
+        transition: 0.3s;
+    }
+    div[data-testid="stMetric"]:hover { border: 1px solid #00CC96; background-color: rgba(0, 204, 150, 0.05); }
+    .stButton>button { border-radius: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+    </style>
+""", unsafe_allow_html=True)
+
 try:
     df = load_data()
     latest = df.iloc[-1]
-    
-    # Custom CSS for a sleeker look
-    st.markdown("""
-        <style>
-        .stMetric { background: rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 10px; border-left: 5px solid #00CC96; }
-        div[data-testid="stExpander"] { border: none !important; box-shadow: none !important; }
-        button[kind="secondary"] { border-radius: 20px; border: 1px solid #00CC96; color: #00CC96; }
-        </style>
-    """, unsafe_allow_html=True)
 
     if st.session_state.page == 'Home':
-        st.title("⚡ Building Energy Management System")
-        st.subheader("Digital Twin Overview")
+        st.title("⚡ BEMS Digital Twin")
+        st.caption(f"Network Status: Online | Last Packet: {latest['Timestamp'].strftime('%H:%M:%S')}")
         
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            st.metric("Grid Voltage", f"{latest['Voltage']:.1f} V", delta=f"{latest['Voltage']-240:.1f}V")
-            st.button("Voltage Analysis", on_click=go_to_page, args=('Detail', 'Voltage'), use_container_width=True)
+            st.metric("Voltage", f"{latest['Voltage']:.1f} V", delta=f"{latest['Voltage']-240:.1f}V")
+            st.button("Analyze Voltage", on_click=go_to_page, args=('Detail', 'Voltage'), use_container_width=True)
         with c2:
-            st.metric("Load Current", f"{latest['Current']:.2f} A")
-            st.button("Current Analysis", on_click=go_to_page, args=('Detail', 'Current'), use_container_width=True)
+            st.metric("Current", f"{latest['Current']:.2f} A")
+            st.button("Analyze Current", on_click=go_to_page, args=('Detail', 'Current'), use_container_width=True)
         with c3:
             st.metric("Active Power", f"{int(latest['Power'])} W")
-            st.button("Power Analysis", on_click=go_to_page, args=('Detail', 'Power'), use_container_width=True)
+            st.button("Analyze Power", on_click=go_to_page, args=('Detail', 'Power'), use_container_width=True)
         with c4:
             today_kwh = df[df['Timestamp'].dt.date == datetime.now().date()]['kWh_Interval'].sum()
-            st.metric("Energy Today", f"{today_kwh:.3f} kWh")
-            st.button("Consumption", on_click=go_to_page, args=('Detail', 'Consumption'), use_container_width=True)
+            st.metric("Today's Units", f"{today_kwh:.3f} kWh")
+            st.button("Analyze Consumption", on_click=go_to_page, args=('Detail', 'Consumption'), use_container_width=True)
 
     else:
         param = st.session_state.selected_param
-        st.button("← BACK TO DASHBOARD", on_click=go_to_page, args=('Home',))
-        st.title(f"📊 {param} Diagnostic Center")
+        st.button("← Back to Dashboard", on_click=go_to_page, args=('Home',))
+        st.title(f"📊 {param} Analytics")
         
         unit_map = {"Voltage": "V", "Current": "A", "Power": "W", "Consumption": "kWh"}
         color_map = {"Voltage": "#FF4B4B", "Current": "#636EFA", "Power": "#00CC96", "Consumption": "#FFAA00"}
         unit, color = unit_map.get(param, ""), color_map.get(param, "#00ff00")
 
         if param == "Consumption":
-            # Bar charts are best for units (accumulation)
             t1, t2, t3, t4 = st.tabs(["Hourly Units", "Daily History", "Weekly Trend", "Monthly Overview"])
-            for tab, (res, t_format) in zip([t1, t2, t3, t4], [('H', '%H:00'), ('D', '%b %d'), ('W', 'Week %V'), ('ME', '%b %Y')]):
+            for tab, (res, dt_tick) in zip([t1, t2, t3, t4], [('H', 3600000), ('D', 86400000), ('W', None), ('ME', None)]):
                 with tab:
                     res_df = df.resample(res, on='Timestamp').agg({'kWh_Interval':'sum'}).reset_index()
-                    fig = go.Figure(go.Bar(x=res_df['Timestamp'], y=res_df['kWh_Interval'], marker_color=color, marker_line_width=0))
-                    fig.update_layout(template="plotly_dark", hovermode="x unified", dragmode="pan")
+                    fig = go.Figure(go.Bar(x=res_df['Timestamp'], y=res_df['kWh_Interval'], marker_color=color))
+                    fig.update_layout(template="plotly_dark", hovermode="x unified", xaxis=dict(dtick=dt_tick))
                     st.plotly_chart(fig, use_container_width=True)
         else:
-            # Line/Area charts are best for V, I, P (continuous parameters)
-            t1, t2, t3 = st.tabs(["Live Pulse (1-Min)", "Hourly Average Trend", "Daily Stability"])
-            
+            t1, t2, t3 = st.tabs(["Live Pulse (1-Min)", "Hourly Peak Trend", "Daily Stability"])
             for tab, res in zip([t1, t2, t3], [None, 'H', 'D']):
                 with tab:
                     if res:
-                        # For averages, we use a smooth line to show the "envelope"
-                        plot_df = df.resample(res, on='Timestamp').agg({param:'mean'}).reset_index()
-                        t_format = '%b %d, %H:%M' if res == 'H' else '%b %d'
-                        mode, fill = 'lines', 'none'
+                        # PEAK-HOLD LOGIC: Using .max() instead of .mean() for accuracy
+                        plot_df = df.resample(res, on='Timestamp').agg({param:'max'}).reset_index()
+                        dt_tick = 3600000 if res == 'H' else 86400000
                     else:
                         plot_df = df
-                        t_format = '%H:%M'
-                        mode, fill = 'lines', 'tozeroy'
+                        dt_tick = None
 
                     fig = go.Figure()
+                    # Add the main curve
                     fig.add_trace(go.Scatter(
                         x=plot_df['Timestamp'], y=plot_df[param],
-                        mode=mode, fill=fill,
+                        mode='lines+markers' if res else 'lines',
                         line=dict(color=color, width=3, shape='spline'),
+                        fill='tozeroy',
                         hovertemplate = f"<b>{param}:</b> %{{y:.2f}} {unit}<extra></extra>"
                     ))
 
-                    # Safety limits only on Voltage Detail
-                    if param == "Voltage" and not res:
-                        fig.add_hline(y=258, line_dash="dot", line_color="rgba(255,0,0,0.5)", annotation_text="Limit")
-                        fig.add_hline(y=170, line_dash="dot", line_color="rgba(255,0,0,0.5)")
+                    # ADD PEAK MARKER (The Max Value Point)
+                    peak_idx = plot_df[param].idxmax()
+                    peak_val = plot_df[param].max()
+                    peak_time = plot_df['Timestamp'][peak_idx]
+                    
+                    fig.add_annotation(x=peak_time, y=peak_val, text=f"PEAK: {peak_val:.1f}{unit}",
+                                     showarrow=True, arrowhead=1, bgcolor=color, font=dict(color="black"))
 
                     fig.update_layout(
-                        template="plotly_dark", hovermode="x unified",
-                        xaxis=dict(showgrid=False, rangeslider=dict(visible=False), 
-                        rangeselector=dict(buttons=list([
-                            dict(count=1, label="1h", step="hour", stepmode="backward"),
-                            dict(count=24, label="1d", step="hour", stepmode="backward"),
-                            dict(step="all")
-                        ]), bgcolor="rgba(0,0,0,0)"))
+                        template="plotly_dark", 
+                        hovermode="x unified",
+                        xaxis=dict(
+                            showgrid=False,
+                            dtick=dt_tick, # Force hourly ticks
+                            tickformat="%H:%M\n%b %d" if res == 'H' else "%b %d",
+                            rangeselector=dict(buttons=list([
+                                dict(count=6, label="6h", step="hour", stepmode="backward"),
+                                dict(count=24, label="1d", step="hour", stepmode="backward"),
+                                dict(step="all")
+                            ]), bgcolor="rgba(0,0,0,0.5)")
+                        )
                     )
                     st.plotly_chart(fig, use_container_width=True)
 
