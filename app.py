@@ -12,7 +12,7 @@ st_autorefresh(interval=60 * 1000, key="bems_heartbeat")
 # --- SECRETS & URLs ---
 # It is better to use st.secrets for these on GitHub, but I'll use placeholders for now
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRP4yZn_0PQCRB9xZcNm9bKMv6vZhk6P9kjEFX6iuXh-71ExjMWK6uRLqnZ12BgKJDtwo8a8jYRXPAf/pub?gid=0&single=true&output=csv" 
-WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx47Q5JGBzPT-HnCksSFEV4Bj1YjHSUtg7tGTUv1ONHL9PLOCYjyBqsordYe5Cr8gjR/exec"
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwGIwHCVI9KrBmNn327hAnyohW2TAh4G245GPye1PDMgJd4Ppn53F42cOIrRv188m9zWA/exec"
 RELAY_ID = "bf44d7e214c9e67fa8vhoy"
 
 # --- DATA LOADING ---
@@ -126,3 +126,4 @@ try:
 
 except Exception as e:
     st.error(f"Detailed Sync Error: {e}")
+
