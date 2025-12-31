@@ -1,23 +1,63 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import requests  # Added for control commands
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
-st.set_page_config(page_title="BEMS Digital Twin", layout="wide", initial_sidebar_state="collapsed")
+# --- CONFIG & REFRESH ---
+st.set_page_config(page_title="BEMS Digital Twin", layout="wide", initial_sidebar_state="expanded")
 st_autorefresh(interval=60 * 1000, key="bems_heartbeat")
 
+# --- SECRETS & URLs ---
+# It is better to use st.secrets for these on GitHub, but I'll use placeholders for now
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRP4yZn_0PQCRB9xZcNm9bKMv6vZhk6P9kjEFX6iuXh-71ExjMWK6uRLqnZ12BgKJDtwo8a8jYRXPAf/pub?gid=0&single=true&output=csv" 
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx47Q5JGBzPT-HnCksSFEV4Bj1YjHSUtg7tGTUv1ONHL9PLOCYjyBqsordYe5Cr8gjR/exec"
+RELAY_ID = "bf44d7e214c9e67fa8vhoy"
 
+# --- DATA LOADING ---
 @st.cache_data(ttl=15)
 def load_data():
-    # We use 'header=0' to ensure Streamlit reads your Row 1 as column names
     df = pd.read_csv(SHEET_URL, on_bad_lines='skip', engine='python', header=0)
-    # This removes any accidental spaces in your Google Sheet headers
     df.columns = [str(col).strip() for col in df.columns]
     df['Timestamp'] = pd.to_datetime(df['Timestamp'])
     return df
 
+# --- CONTROL FUNCTION ---
+def send_relay_command(state):
+    """Sends action=control to Google Script"""
+    params = {
+        "action": "control",
+        "id": RELAY_ID,
+        "value": "true" if state else "false"
+    }
+    try:
+        response = requests.get(WEB_APP_URL, params=params)
+        return response.status_code == 200
+    except Exception as e:
+        st.error(f"Control Error: {e}")
+        return False
+
+# --- SIDEBAR CONTROL CENTER ---
+st.sidebar.title("🕹️ BEMS Control")
+st.sidebar.markdown("---")
+st.sidebar.subheader("Non-Essential Loads")
+st.sidebar.info("Controls: AC Units in B Block")
+
+col_on, col_off = st.sidebar.columns(2)
+if col_on.button("🟢 RESTORE", use_container_width=True):
+    if send_relay_command(True):
+        st.sidebar.success("Relay: ON")
+    
+if col_off.button("🔴 SHED", use_container_width=True):
+    if send_relay_command(False):
+        st.sidebar.warning("Relay: OFF")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Essential Status")
+st.sidebar.success("Fans & Lights: PROTECTED")
+
+# --- APP LOGIC ---
 if 'page' not in st.session_state: st.session_state.page = 'Home'
 if 'selected_param' not in st.session_state: st.session_state.selected_param = None
 
@@ -31,11 +71,9 @@ try:
 
     # --- LAYER 1: OVERVIEW ---
     if st.session_state.page == 'Home':
-        st.title("⚡ BEMS Digital Twin")
+        st.title("⚡ BEMS Digital Twin (B Block)")
         
-        # Check for Temp in headers
         t_val = float(latest['Temp']) if 'Temp' in latest else 0.0
-        
         if t_val > 65: st.error(f"🚨 OVERHEAT: {t_val}°C")
         
         c1, c2, c3, c4, c5 = st.columns(5)
@@ -52,7 +90,6 @@ try:
             st.metric("Temp", f"{t_val:.1f} °C")
             st.button("Analyze T", on_click=go_to_page, args=('Detail', 'Temp'), use_container_width=True)
         with c5:
-            # We use 'kWh_Interval' as the internal key for Consumption
             today_kwh = df[df['Timestamp'].dt.date == datetime.now().date()]['kWh_Interval'].sum()
             st.metric("Energy", f"{today_kwh:.3f} kWh")
             st.button("Analyze E", on_click=go_to_page, args=('Detail', 'Consumption'), use_container_width=True)
@@ -60,14 +97,12 @@ try:
     # --- LAYER 2: DETAIL ---
     else:
         param = st.session_state.selected_param
-        st.button("← Back", on_click=go_to_page, args=('Home',))
+        st.button("← Back to Overview", on_click=go_to_page, args=('Home',))
         
-        # Logic to map 'Consumption' button to 'kWh_Interval' column
         col_to_use = 'kWh_Interval' if param == 'Consumption' else param
         
-        # Check if the column actually exists in the sheet
         if col_to_use not in df.columns:
-            st.error(f"Column '{col_to_use}' not found in Google Sheet. Check your headers!")
+            st.error(f"Column '{col_to_use}' not found.")
         else:
             selected_date = st.date_input("Select Date", value=datetime.now().date())
             day_df = df[df['Timestamp'].dt.date == selected_date].copy()
@@ -75,13 +110,11 @@ try:
             if day_df.empty:
                 st.warning("No data for this date.")
             else:
-                # Summary Stats
                 s1, s2, s3 = st.columns(3)
                 s1.info(f"**Max**: {day_df[col_to_use].max():.2f}")
                 s2.info(f"**Avg**: {day_df[col_to_use].mean():.2f}")
                 s3.info(f"**Min**: {day_df[col_to_use].min():.2f}")
 
-                # Graphs
                 fig = go.Figure()
                 if param == "Consumption":
                     h_df = day_df.resample('H', on='Timestamp').agg({'kWh_Interval':'sum'}).reset_index()
