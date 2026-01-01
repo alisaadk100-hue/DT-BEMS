@@ -9,13 +9,13 @@ from streamlit_autorefresh import st_autorefresh
 
 # --- 1. CONFIG & REFRESH ---
 st.set_page_config(page_title="BEMS Digital Twin - B Block", layout="wide", initial_sidebar_state="expanded")
-st_autorefresh(interval=25 * 1000, key="bems_heartbeat")
+st_autorefresh(interval=5 * 1000, key="bems_heartbeat")
 
 # --- 2. SECRETS & URLs ---
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycby3BXsDHRsuGg_01KC5xGAm4ebKnMEGinmkfxtZwuMebuR87AZzgCeidgeytVoVezFvqA/exec"
 SHEET_ID = "1RSHAh23D4NPwNEU9cD5JbsMsYeZVYVTUfG64_4r-zsU"
-BEMS_LIVE_GID = "853758052" # Verified triple-node data
-ARCHIVE_GID = "0" # Usually '0' for the first tab
+BEMS_LIVE_GID = "853758052" 
+ARCHIVE_GID = "0" 
 
 DEVICES = {
     "MAIN": "bf44d7e214c9e67fa8vhoy",
@@ -37,32 +37,13 @@ def load_data(gid):
         st.error(f"Sync Error: {e}")
         return pd.DataFrame()
 
-# --- 4. NAVIGATION ---
+# --- 4. NAVIGATION & STATE ---
 if 'page' not in st.session_state: st.session_state.page = 'Home'
 if 'selected_param' not in st.session_state: st.session_state.selected_param = None
-if 'data_mode' not in st.session_state: st.session_state.data_mode = 'Live BEMS'
 
 def go_to_page(p, param=None):
     st.session_state.page = p
     st.session_state.selected_param = param
-
-# --- 5. INITIAL DATA FETCH ---
-df_live = load_data(BEMS_LIVE_GID)
-latest = df_live.iloc[-1] if not df_live.empty else None
-
-# --- 6. SIDEBAR CONTROL & ARCHIVE TOGGLE ---
-st.sidebar.title("🕹️ BEMS Control Panel")
-st.sidebar.markdown("---")
-
-# DATA SOURCE SELECTOR
-st.sidebar.subheader("📂 Data Analysis Mode")
-st.session_state.data_mode = st.sidebar.radio(
-    "Select Source for Analysis:", 
-    ["Live BEMS", "Main Archive"],
-    help="Switch between current 3-switch data and Phase 1 historical data."
-)
-
-st.sidebar.markdown("---")
 
 def send_relay_command(dev_key, state):
     params = {"action": "control", "id": DEVICES[dev_key], "value": "true" if state else "false"}
@@ -71,66 +52,99 @@ def send_relay_command(dev_key, state):
         return response.status_code == 200
     except: return False
 
-def render_sidebar_controls():
-    # Only show controls if in Live Mode
-    for label, key, pow_col in [("Main", "MAIN", "M_Pow"), ("Essential", "ESSENTIAL", "E_Pow"), ("Non-Essential", "NON_ESSENTIAL", "NE_Pow")]:
-        st.sidebar.write(f"**{label}**")
-        p_val = float(latest[pow_col]) if latest is not None else 0.0
-        if p_val > 5.0: st.sidebar.success(f"{p_val} W")
-        else: st.sidebar.error("OFF")
-        c1, c2 = st.sidebar.columns(2)
-        if c1.button("ON", key=f"on_{key}"): 
-            send_relay_command(key, True); time.sleep(5); st.rerun()
-        if c2.button("OFF", key=f"off_{key}"): 
-            send_relay_command(key, False); time.sleep(5); st.rerun()
+# --- 5. INITIAL DATA FETCH ---
+df_live = load_data(BEMS_LIVE_GID)
+latest = df_live.iloc[-1] if not df_live.empty else None
 
-if st.session_state.data_mode == "Live BEMS":
-    render_sidebar_controls()
+# --- 6. SIDEBAR: POWER STATUS & MODE TOGGLE ---
+st.sidebar.title("🕹️ BEMS Master Control")
+st.sidebar.markdown("---")
 
-# --- 7. MAIN DASHBOARD ---
+# A. MODE SELECTOR
+st.sidebar.subheader("📂 Operational Mode")
+data_mode = st.sidebar.radio(
+    "Switch Dashboard View:", 
+    ["Live Dashboard", "Main Archive"],
+    help="Live Mode shows the Digital Twin. Archive Mode allows forensic analysis of Phase 1 data."
+)
+
+st.sidebar.markdown("---")
+
+# B. LIVE POWER STATUS (Always visible for safety)
+st.sidebar.subheader("⚡ Real-Time Load")
+for label, key, pow_col in [("Building Main", "MAIN", "M_Pow"), ("Essential", "ESSENTIAL", "E_Pow"), ("Non-Essential", "NON_ESSENTIAL", "NE_Pow")]:
+    p_val = float(latest[pow_col]) if latest is not None else 0.0
+    col_l, col_r = st.sidebar.columns([2,1])
+    col_l.write(f"**{label}**")
+    if p_val > 5.0: col_r.success(f"{int(p_val)}W")
+    else: col_r.error("OFF")
+
+st.sidebar.markdown("---")
+
+# C. SWITCH CONTROLS
+st.sidebar.subheader("Manual Overrides")
+for label, key in [("Main Grid", "MAIN"), ("Lights", "ESSENTIAL"), ("AC Units", "NON_ESSENTIAL")]:
+    c1, c2 = st.sidebar.columns(2)
+    if c1.button(f"ON ({label})", key=f"on_{key}"):
+        if send_relay_command(key, True): time.sleep(5); st.rerun()
+    if c2.button(f"OFF ({label})", key=f"off_{key}"):
+        if send_relay_command(key, False): time.sleep(5); st.rerun()
+
+# --- 7. HOME SCREEN LOGIC ---
 if st.session_state.page == 'Home':
-    st.title("⚡ BEMS Triple-Node Digital Twin")
     
-    # PARAMETER MATRIX
-    # We use a nested loop to create Analyze buttons for every parameter of every switch
-    nodes = [("Main Building", "M"), ("Essential (Lights)", "E"), ("Non-Essential (AC)", "NE")]
-    params = [("Volt", "V"), ("Curr", "I"), ("Pow", "P"), ("Temp", "T"), ("kWh", "E")]
-    
-    for node_label, prefix in nodes:
-        st.markdown(f"#### {node_label}")
-        cols = st.columns(5)
-        for i, (p_label, p_suffix) in enumerate(params):
-            col_name = f"{prefix}_{p_label}"
-            with cols[i]:
-                val = latest[col_name] if latest is not None and col_name in latest else 0.0
-                st.metric(p_label, f"{val:.1f}")
-                st.button(f"Analyze {p_suffix}", key=f"btn_{col_name}", on_click=go_to_page, args=('Detail', col_name))
-    
-    st.markdown("---")
-    st.markdown("### 📊 Power Comparison (Watts)")
-    # (Grouped Bar Chart Code from previous version remains here)
+    # --- VIEW 1: LIVE BEMS DIGITAL TWIN ---
+    if data_mode == "Live Dashboard":
+        st.title("⚡ BEMS Triple-Node Digital Twin")
+        
+        # Power Matrix for all 3 switches
+        nodes = [("Main Building", "M"), ("Essential (Lights)", "E"), ("Non-Essential (AC)", "NE")]
+        params = [("Volt", "V"), ("Curr", "I"), ("Pow", "P"), ("Temp", "T"), ("kWh", "E")]
+        
+        for node_label, prefix in nodes:
+            st.markdown(f"#### {node_label}")
+            cols = st.columns(5)
+            for i, (p_label, p_suffix) in enumerate(params):
+                col_name = f"{prefix}_{p_label}"
+                with cols[i]:
+                    val = latest[col_name] if latest is not None and col_name in latest else 0.0
+                    st.metric(p_label, f"{val:.1f}")
+                    st.button(f"Analyze {p_suffix}", key=f"live_{col_name}", on_click=go_to_page, args=('Detail', col_name))
+        
+        st.markdown("---")
+        st.markdown("### 📊 Power Comparison Comparison (Watts)")
+        # Bar chart code goes here...
 
-# --- 8. DETAIL PAGE (Archive vs Live) ---
+    # --- VIEW 2: ARCHIVE ANALYTICS ---
+    else:
+        st.title("📂 Phase 1: Historical Data Analytics")
+        st.info("Currently viewing data from 'Archive_Main'. Live Digital Twin metrics are hidden to focus on historical trends.")
+        
+        st.markdown("### Select a Parameter to Analyze from Archive")
+        # Archive parameters use the old naming convention
+        arch_cols = st.columns(5)
+        with arch_cols[0]: st.button("📈 Analyze Voltage", on_click=go_to_page, args=('Detail', 'Voltage'))
+        with arch_cols[1]: st.button("📈 Analyze Current", on_click=go_to_page, args=('Detail', 'Current'))
+        with arch_cols[2]: st.button("📈 Analyze Power", on_click=go_to_page, args=('Detail', 'Power'))
+        with arch_cols[3]: st.button("📈 Analyze Temp", on_click=go_to_page, args=('Detail', 'Temp'))
+        with arch_cols[4]: st.button("📈 Analyze kWh", on_click=go_to_page, args=('Detail', 'kWh_Interval'))
+        
+        st.markdown("---")
+        st.write("Archive data provides baseline metrics before the implementation of multi-node load shedding.")
+
+# --- 8. DETAIL PAGE LOGIC ---
 else:
     target = st.session_state.selected_param
     st.button("← Back to Overview", on_click=go_to_page, args=('Home',))
     
-    # Load correct dataset based on sidebar toggle
-    current_df = load_data(ARCHIVE_GID) if st.session_state.data_mode == "Main Archive" else df_live
+    # Automatically pull from Archive if that mode is selected
+    current_df = load_data(ARCHIVE_GID) if data_mode == "Main Archive" else df_live
     
-    # If Archive mode, remap old names to target
-    if st.session_state.data_mode == "Main Archive":
-        name_map = {"M_Volt": "Voltage", "M_Curr": "Current", "M_Pow": "Power", "M_Temp": "Temp", "M_kWh": "kWh_Interval"}
-        target = name_map.get(target, target)
-        st.header(f"📂 ARCHIVE: {target} Analysis")
-    else:
-        st.header(f"📊 LIVE BEMS: {target} Analysis")
-
+    st.header(f"📊 {data_mode}: {target} Analysis")
     selected_date = st.date_input("Select Date", value=datetime.now().date())
     day_df = current_df[current_df['Timestamp'].dt.date == selected_date].copy()
 
     if not day_df.empty and target in day_df.columns:
-        # (Standard Analytics & Graphing Code with Mobile Fixes)
         s1, s2 = st.columns(2)
         s1.metric("Maximum", f"{day_df[target].max():.2f}")
         s2.metric("Average", f"{day_df[target].mean():.2f}")
@@ -141,4 +155,4 @@ else:
         fig.update_yaxes(fixedrange=True)
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     else:
-        st.warning("No data found for this parameter/date combination.")
+        st.warning("No data found for this selection. Check if the date is correct for the chosen mode.")
