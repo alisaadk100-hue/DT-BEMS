@@ -2,83 +2,67 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import requests
-import time # Add this at the very top of your script
+import time
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from streamlit_autorefresh import st_autorefresh
 
 # --- 1. CONFIG & REFRESH ---
 st.set_page_config(page_title="BEMS Digital Twin - B Block", layout="wide", initial_sidebar_state="expanded")
-# Refresh every 30 seconds to stay in sync with Unity and the Sheet
-st_autorefresh(interval=60 * 1000, key="bems_heartbeat")
+# Use 5 seconds for the demo, increase to 30s for long-term use
+st_autorefresh(interval=5 * 1000, key="bems_heartbeat")
 
-# --- 2. SECRETS & URLs (Replace with your actual links) ---
-# Update these with your exact URLs
-
+# --- 2. SECRETS & URLs ---
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycby3BXsDHRsuGg_01KC5xGAm4ebKnMEGinmkfxtZwuMebuR87AZzgCeidgeytVoVezFvqA/exec"
-RELAY_ID = "bf44d7e214c9e67fa8vhoy" # Your specific Tuya Device ID
-
-# --- 3. DATA LOADING FUNCTION ---
-# Remove @st.cache_data entirely for your presentation to get LIVE data
-
-
-# Replace YOUR_SHEET_ID with your actual ID
+RELAY_ID = "bf44d7e214c9e67fa8vhoy" 
 SHEET_ID = "1RSHAh23D4NPwNEU9cD5JbsMsYeZVYVTUfG64_4r-zsU"
-DIRECT_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
-
-
+# --- 3. DATA LOADING (Direct Export & Cache-Buster) ---
 def load_data():
     try:
-        # 1. Create a unique 'Cache Buster' using milliseconds + a random number
-        # This prevents Google from serving a 'remembered' version of the file.
         cb = int(time.time() * 1000) + random.randint(1, 1000)
-        
-        # 2. Construct the Direct Export URL with the unique buster
-        # Using &v= instead of ?v= if your URL already has parameters
+        # Using Direct Export to bypass the 5-minute Google 'Publish' lag
         final_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&v={cb}"
         
-        # 3. Request data with a very short timeout
         df = pd.read_csv(final_url, on_bad_lines='skip', engine='python')
-        
-        # Clean columns and convert time
         df.columns = [str(col).strip() for col in df.columns]
         if 'Timestamp' in df.columns:
             df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-            
         return df
     except Exception as e:
         st.error(f"Sync Error: {e}")
         return pd.DataFrame()
-# --- 4. RELAY CONTROL FUNCTION ---
 
+# --- 4. NAVIGATION & CONTROL ---
+if 'page' not in st.session_state: st.session_state.page = 'Home'
+if 'selected_param' not in st.session_state: st.session_state.selected_param = None
+
+def go_to_page(p, param=None):
+    st.session_state.page = p
+    st.session_state.selected_param = param
 
 def send_relay_command(state):
-    params = {
-        "action": "control",
-        "id": RELAY_ID,
-        "value": "true" if state else "false"
-    }
+    params = {"action": "control", "id": RELAY_ID, "value": "true" if state else "false"}
     try:
-        # Increased timeout from 15 to 30 to prevent the 'Read timed out' error
-        response = requests.get(WEB_APP_URL, params=params, timeout=50) 
-        if response.status_code == 200:
-            st.cache_data.clear() 
-            return True
-        return False
+        # Timeout set to 60 for the long Triple-Verification process
+        response = requests.get(WEB_APP_URL, params=params, timeout=60) 
+        return response.status_code == 200
     except Exception as e:
         st.sidebar.error(f"Control Error: {e}")
         return False
+
 # --- 5. INITIAL DATA FETCH ---
 df = load_data()
-latest = None
-is_active = False
+latest = df.iloc[-1] if not df.empty else None
+# Offline Detection: If no data for > 2 mins, assume outage
+is_offline = False
+if latest is not None:
+    diff = (datetime.now() - latest['Timestamp']).total_seconds() / 60
+    if diff > 2.0: is_offline = True
 
-if not df.empty:
-    latest = df.iloc[-1]
-    # Logic: If Power is > 5W, we consider the relay "ON"
-    current_p = float(latest['Power']) if 'Power' in latest else 0.0
-    is_active = current_p > 5.0
+# Logic for Grid Status
+current_p = float(latest['Power']) if latest is not None and not is_offline else 0.0
+is_active = current_p > 5.0 and not is_offline
 
 # --- 6. SIDEBAR CONTROL CENTER ---
 st.sidebar.title("🕹️ BEMS Control Panel")
@@ -86,78 +70,89 @@ st.sidebar.markdown("---")
 
 # LIVE STATUS INDICATOR
 st.sidebar.subheader("Live System Status")
-if is_active:
+if is_offline:
+    st.sidebar.warning("⚠️ STATUS: OFFLINE (No Data)")
+elif is_active:
     st.sidebar.success("✅ GRID STATUS: ACTIVE")
-    if latest is not None:
-        st.sidebar.write(f"Current Load: {latest['Power']} W")
+    st.sidebar.write(f"Current Load: {current_p} W")
 else:
     st.sidebar.error("🚨 GRID STATUS: SHEDDED")
-    st.sidebar.write("Non-Essential Loads (ACs) are OFF")
+    st.sidebar.write("Non-Essential Loads are OFF")
 
 st.sidebar.markdown("---")
 
-# MANUAL OVERRIDE BUTTONS (Always defined here to prevent NameError)
-
-# --- SIDEBAR CONTROL CENTER ---
+# CONTROL BUTTONS
 st.sidebar.subheader("Manual Load Control")
 col_on, col_off = st.sidebar.columns(2)
 
 if col_on.button("🟢 RESTORE", use_container_width=True):
-    with st.spinner("Hardware warming up... Verifying Grid Recovery (45s)"):
+    with st.spinner("Stabilizing Hardware... (45s)"):
         if send_relay_command(True):
-            st.cache_data.clear()
-            time.sleep(40) # Matches the new Google Script total time
+            time.sleep(40) # Allow Google Script to finish triple-logging
             st.rerun()
 
 if col_off.button("🔴 SHED", use_container_width=True):
-    with st.spinner("Shedding Load... Verifying Grid (25s)"):
+    with st.spinner("Shedding Load... (25s)"):
         if send_relay_command(False):
-            st.cache_data.clear()
-            time.sleep(25) # Matches the shorter Shed wait
+            time.sleep(25) 
             st.rerun()
-            
-st.sidebar.markdown("---")
-st.sidebar.info("Note: Essential loads (Lights/Fans) are protected.")
 
 # --- 7. MAIN DASHBOARD UI ---
 if latest is not None:
-    st.title("⚡ BEMS Digital Twin (B-Block Overview)")
-    
-    # Alert for overheating
-    t_val = float(latest['Temp']) if 'Temp' in latest else 0.0
-    if t_val > 65: 
-        st.error(f"🚨 SYSTEM ALERT: TEMPERATURE AT {t_val}°C")
+    if st.session_state.page == 'Home':
+        st.title("⚡ BEMS Digital Twin (B-Block Overview)")
+        
+        # Metrics Row
+        m1, m2, m3, m4, m5 = st.columns(5)
+        with m1: 
+            st.metric("Voltage", f"{latest['Voltage']:.1f} V")
+            st.button("Analyze V", on_click=go_to_page, args=('Detail', 'Voltage'))
+        with m2: 
+            st.metric("Current", f"{latest['Current']:.2f} A")
+            st.button("Analyze I", on_click=go_to_page, args=('Detail', 'Current'))
+        with m3: 
+            st.metric("Power", f"{int(latest['Power'])} W")
+            st.button("Analyze P", on_click=go_to_page, args=('Detail', 'Power'))
+        with m4: 
+            st.metric("Temp", f"{latest['Temp']:.1f} °C")
+            st.button("Analyze T", on_click=go_to_page, args=('Detail', 'Temp'))
+        with m5:
+            today_kwh = df[df['Timestamp'].dt.date == datetime.now().date()]['kWh_Interval'].sum()
+            st.metric("Energy (Today)", f"{today_kwh:.3f} kWh")
+            st.button("Analyze E", on_click=go_to_page, args=('Detail', 'kWh_Interval'))
 
-    # Metrics Row
-    m1, m2, m3, m4, m5 = st.columns(5)
-    with m1: st.metric("Voltage", f"{latest['Voltage']:.1f} V")
-    with m2: st.metric("Current", f"{latest['Current']:.2f} A")
-    with m3: st.metric("Power", f"{int(latest['Power'])} W")
-    with m4: st.metric("Temp", f"{t_val:.1f} °C")
-    with m5:
-        today_kwh = df[df['Timestamp'].dt.date == datetime.now().date()]['kWh_Interval'].sum()
-        st.metric("Energy (Today)", f"{today_kwh:.3f} kWh")
+        # NEW: Daily Energy Usage Graph
+        st.markdown("### 📊 Daily Energy Consumption (Hourly kWh)")
+        today_df = df[df['Timestamp'].dt.date == datetime.now().date()].copy()
+        if not today_df.empty:
+            # Resample to hourly sums for a clean consumption view
+            hourly_kwh = today_df.resample('H', on='Timestamp')['kWh_Interval'].sum().reset_index()
+            fig = go.Figure(go.Bar(x=hourly_kwh['Timestamp'], y=hourly_kwh['kWh_Interval'], marker_color='#FFAA00'))
+            fig.update_layout(template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20), xaxis_title="Time", yaxis_title="kWh")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No consumption data recorded for today yet.")
 
-    # Real-time Graph
-    st.markdown("### 📈 Live Power Consumption (B-Block)")
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=df['Timestamp'].tail(50), 
-        y=df['Power'].tail(50), 
-        mode='lines+markers',
-        line=dict(color='#00FF00', width=2),
-        fill='tozeroy'
-    ))
-    fig.update_layout(template="plotly_dark", margin=dict(l=20, r=20, t=40, b=20))
-    st.plotly_chart(fig, use_container_width=True)
+    # --- DETAIL PAGE (Historical Analysis) ---
+    else:
+        target = st.session_state.selected_param
+        st.button("← Back to Overview", on_click=go_to_page, args=('Home',))
+        st.header(f"📊 Historical {target} Analysis")
+
+        # Fixed Calendar Logic: Defaults to current day
+        selected_date = st.date_input("Select Date", value=datetime.now().date())
+        day_df = df[df['Timestamp'].dt.date == selected_date].copy()
+
+        if not day_df.empty:
+            s1, s2, s3 = st.columns(3)
+            s1.info(f"**Max**: {day_df[target].max():.2f}")
+            s2.info(f"**Avg**: {day_df[target].mean():.2f}")
+            s3.info(f"**Min**: {day_df[target].min():.2f}")
+
+            fig = go.Figure(go.Scatter(x=day_df['Timestamp'], y=day_df[target], mode='lines', fill='tozeroy', line=dict(color='#00FF00')))
+            st.plotly_chart(fig.update_layout(template="plotly_dark"), use_container_width=True)
+        else:
+            st.warning(f"No data available for {selected_date}")
 
 else:
     st.warning("⚠️ Connecting to Digital Twin Data Stream...")
-    st.info("Check your Google Sheet CSV Link if this persists.")
-
-
-
-
-
-
-
