@@ -10,7 +10,7 @@ from streamlit_autorefresh import st_autorefresh
 # --- 1. CONFIG & REFRESH ---
 st.set_page_config(page_title="BEMS Digital Twin - B Block", layout="wide", initial_sidebar_state="expanded")
 # Refresh every 30 seconds to stay in sync with Unity and the Sheet
-st_autorefresh(interval=5 * 1000, key="bems_heartbeat")
+st_autorefresh(interval=60 * 1000, key="bems_heartbeat")
 
 # --- 2. SECRETS & URLs (Replace with your actual links) ---
 # Update these with your exact URLs
@@ -154,6 +154,7 @@ if latest is not None:
 else:
     st.warning("⚠️ Connecting to Digital Twin Data Stream...")
     st.info("Check your Google Sheet CSV Link if this persists.")
+
 
 
 
