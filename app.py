@@ -55,35 +55,48 @@ def send_relay_command(dev_key, state):
         return response.status_code == 200
     except: return False
 
-# --- 5. DATA FETCH ---
+def manage_schedules(action, task_data=None):
+    if action == "add":
+        params = {
+            "action": "add_schedule",
+            "device": task_data['node'],
+            "date": str(task_data['date']),
+            "time": task_data['time'],
+            "state": task_data['action'],
+            "repeat": str(task_data['repeat']).upper()
+        }
+        try: requests.get(WEB_APP_URL, params=params, timeout=10)
+        except: pass
+    elif action == "delete":
+        params = {"action": "del_schedule", "id": task_data}
+        try: requests.get(WEB_APP_URL, params=params, timeout=10)
+        except: pass
+
+# --- 5. INITIAL DATA FETCH ---
 df_live = load_data(BEMS_LIVE_GID)
 latest = df_live.iloc[-1] if not df_live.empty else None
 
-# Pre-calculate Today's Energy for Metrics
-today_df = df_live[df_live['Timestamp'].dt.date == datetime.now().date()]
+today_df = df_live[df_live['Timestamp'].dt.date == datetime.now().date()] if not df_live.empty else pd.DataFrame()
 m_energy = today_df['M_kWh'].sum() if not today_df.empty else 0.0
 e_energy = today_df['E_kWh'].sum() if not today_df.empty else 0.0
 ne_energy = today_df['NE_kWh'].sum() if not today_df.empty else 0.0
 
-# --- 6. SIDEBAR: AUTOMATION & CONTROL (STAY THE SAME) ---
-st.sidebar.title("🕹️ BEMS Smart Controller")
-
+# --- 6. SIDEBAR: CLEAN CONTROL PANEL ---
+st.sidebar.title("🕹️ BEMS Master Control")
 data_mode = st.sidebar.radio("Dashboard Mode:", ["Live BEMS", "Main Archive"])
-st.sidebar.markdown("---")
 
+st.sidebar.markdown("---")
+# NEW: Scheduler Entry Button
+if st.sidebar.button("📅 Open Cloud Scheduler", use_container_width=True):
+    go_to_page('Scheduler')
+
+st.sidebar.markdown("---")
 st.sidebar.subheader("🛡️ Safety Automation")
 p_limit = st.sidebar.slider("Main Power Limit (W)", 100, 5000, 2500)
 if latest is not None and float(latest['M_Pow']) > p_limit:
     st.sidebar.error(f"🚨 LIMIT EXCEEDED: {latest['M_Pow']}W")
     if send_relay_command("NON_ESSENTIAL", False):
         st.sidebar.warning("Auto-Shedding: Non-Essential OFF")
-
-st.sidebar.subheader("📅 Time Scheduler")
-t_node = st.sidebar.selectbox("Device", ["MAIN", "ESSENTIAL", "NON_ESSENTIAL"])
-t_on = st.sidebar.time_input("ON Time", value=dt_time(8, 0))
-t_off = st.sidebar.time_input("OFF Time", value=dt_time(18, 0))
-if st.sidebar.button("Set Schedule"):
-    st.sidebar.success(f"Schedule Locked for {t_node}")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚡ Real-Time Power")
@@ -99,20 +112,16 @@ if st.session_state.page == 'Home':
     if data_mode == "Live BEMS":
         st.title("⚡ BEMS Triple-Node Digital Twin")
         
-        # 🟢 SECTION 1: MAIN BUILDING (All Parameters)
         st.subheader("🏛️ Main Building Entry")
         m_cols = st.columns(5)
         m_params = [("Voltage", "M_Volt", "V"), ("Current", "M_Curr", "I"), ("Power", "M_Pow", "P"), ("Temp", "M_Temp", "T"), ("Energy", "M_kWh", "E")]
         for i, (lab, col, suf) in enumerate(m_params):
             with m_cols[i]:
-                # If energy, show the summed today value
                 val = m_energy if "kWh" in col else (latest[col] if latest is not None else 0.0)
                 st.metric(lab, f"{val:.2f}" if "kWh" in col else f"{val:.1f}")
                 st.button(f"Analyze {suf}", key=f"main_{col}", on_click=go_to_page, args=('Detail', 'MAIN', col))
 
         st.markdown("---")
-        
-        # 🟢 SECTION 2: SUB NODES (Power Only + Gateway to Deep Analysis)
         s1, s2 = st.columns(2)
         with s1:
             st.subheader("💡 Essential Loads")
@@ -126,123 +135,84 @@ if st.session_state.page == 'Home':
             st.button("Deep Analysis: Non-Essential", key="btn_ne", on_click=go_to_page, args=('NodeDetail', 'NON_ESSENTIAL'))
 
         st.markdown("---")
-
-        # 🟢 SECTION 3: DAILY ENERGY COMPARISON GRAPH
         st.subheader("📊 Today's Energy Distribution (Hourly)")
         if not today_df.empty:
             h_m = today_df.resample('H', on='Timestamp')['M_kWh'].sum().reset_index()
             h_e = today_df.resample('H', on='Timestamp')['E_kWh'].sum().reset_index()
             h_ne = today_df.resample('H', on='Timestamp')['NE_kWh'].sum().reset_index()
-            
             fig = go.Figure()
             fig.add_trace(go.Bar(x=h_m['Timestamp'], y=h_m['M_kWh'], name='Main', marker_color='#FFAA00'))
             fig.add_trace(go.Bar(x=h_e['Timestamp'], y=h_e['E_kWh'], name='Essential', marker_color='#00FF00'))
             fig.add_trace(go.Bar(x=h_ne['Timestamp'], y=h_ne['NE_kWh'], name='Non-Essential', marker_color='#FF4B4B'))
-            
-            fig.update_layout(template="plotly_dark", barmode='group', dragmode=False, 
-                              xaxis_title="Time", yaxis_title="Energy (kWh)", height=400)
-            fig.update_xaxes(fixedrange=True)
-            fig.update_yaxes(fixedrange=True)
+            fig.update_layout(template="plotly_dark", barmode='group', dragmode=False, xaxis_title="Time", yaxis_title="Energy (kWh)", height=400)
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-            
     else:
-        # ARCHIVE VIEW
         st.title("📂 Phase 1: Historical Archive")
-        st.info("Analyzing 'Archive_Main' baseline data.")
         arch_df = load_data(ARCHIVE_GID)
         a_cols = st.columns(5)
         a_params = [("Voltage", "Voltage"), ("Current", "Current"), ("Power", "Power"), ("Temp", "Temp"), ("Energy", "kWh_Interval")]
         for i, (lab, col) in enumerate(a_params):
-            with a_cols[i]:
-                st.button(f"📈 Analyze {lab}", key=f"arch_{col}", on_click=go_to_page, args=('Detail', 'ARCHIVE', col))
+            with a_cols[i]: st.button(f"📈 Analyze {lab}", key=f"arch_{col}", on_click=go_to_page, args=('Detail', 'ARCHIVE', col))
 
-# --- 8. NODE DETAIL PAGE (Deep Analysis for Essential/Non-Essential) ---
+# --- 8. SCHEDULER WINDOW (DEDICATED PAGE) ---
+elif st.session_state.page == 'Scheduler':
+    st.button("← Back to Dashboard", on_click=go_to_page, args=('Home',))
+    st.title("📅 24/7 Cloud Scheduler")
+    st.info("Timers set here run independently in the Google Cloud even if this app is closed.")
+    
+    col_set, col_view = st.columns([1, 2])
+    
+    with col_set:
+        st.subheader("➕ Create New Timer")
+        t_node = st.selectbox("Device", ["MAIN", "ESSENTIAL", "NON_ESSENTIAL"], key="p_dev")
+        t_action = st.radio("Action", ["ON", "OFF"], horizontal=True, key="p_act")
+        t_date = st.date_input("Trigger Date", value=datetime.now().date(), key="p_date")
+        t_time = st.text_input("Time (HH:MM)", value=datetime.now().strftime("%H:%M"), key="p_time")
+        t_rep = st.checkbox("Repeat Daily", value=True, key="p_rep")
+        
+        if st.button("Save to Cloud", use_container_width=True):
+            with st.spinner("Syncing..."):
+                manage_schedules("add", {'node': t_node, 'date': t_date, 'time': t_time, 'action': t_action, 'repeat': t_rep})
+                st.success("Timer Added!")
+                time.sleep(1)
+                st.rerun()
+
+    with col_view:
+        st.subheader("📜 Active Timers")
+        df_sched = load_data(S_GID)
+        if not df_sched.empty:
+            for index, row in df_sched.iterrows():
+                with st.expander(f"⏰ {row['Time']} - {row['Device']} ({row['Action']})"):
+                    c1, c2 = st.columns([3, 1])
+                    c1.write(f"**Repeat:** {row['Repeat']} | **Date:** {row['Date']}")
+                    if c2.button("Delete", key=f"cl_del_{row['ID']}"):
+                        manage_schedules("delete", row['ID'])
+                        st.rerun()
+        else: st.write("No active timers found.")
+
+# --- 9. NODE DETAIL PAGE ---
 elif st.session_state.page == 'NodeDetail':
     node = st.session_state.selected_node
     st.button("← Back to Dashboard", on_click=go_to_page, args=('Home',))
     st.header(f"🔍 {node} Detailed Parameters")
     pre = "E" if node == "ESSENTIAL" else "NE"
-    
     n_cols = st.columns(5)
-    n_params = [("Voltage", f"{pre}_Volt", "V"), ("Current", f"{pre}_Curr", "I"), 
-                ("Power", f"{pre}_Pow", "P"), ("Temp", f"{pre}_Temp", "T"), ("Energy", f"{pre}_kWh", "E")]
-    
+    n_params = [("Voltage", f"{pre}_Volt", "V"), ("Current", f"{pre}_Curr", "I"), ("Power", f"{pre}_Pow", "P"), ("Temp", f"{pre}_Temp", "T"), ("Energy", f"{pre}_kWh", "E")]
     for i, (lab, col, suf) in enumerate(n_params):
         with n_cols[i]:
             val = latest[col] if latest is not None else 0.0
             st.metric(lab, f"{val:.2f}")
             st.button(f"Analyze {suf}", key=f"det_{col}", on_click=go_to_page, args=('Detail', node, col))
 
-# --- 9. GRAPH DETAIL PAGE (Historical Scatter) ---
+# --- 10. GRAPH DETAIL PAGE ---
 elif st.session_state.page == 'Detail':
     target = st.session_state.selected_param
     st.button("← Back", on_click=go_to_page, args=('Home' if st.session_state.selected_node in ['MAIN', 'ARCHIVE'] else 'NodeDetail', st.session_state.selected_node))
     st.header(f"📈 Historical Analysis: {target}")
-    
     curr_df = load_data(ARCHIVE_GID) if st.session_state.selected_node == "ARCHIVE" else df_live
     selected_date = st.date_input("Select Date", value=datetime.now().date())
-    day_df = curr_df[curr_df['Timestamp'].dt.date == selected_date].copy()
-
+    day_df = curr_df[curr_df['Timestamp'].dt.date == selected_date].copy() if not curr_df.empty else pd.DataFrame()
     if not day_df.empty:
         fig = go.Figure(go.Scatter(x=day_df['Timestamp'], y=day_df[target], mode='lines', fill='tozeroy', line=dict(color='#FFAA00')))
         fig.update_layout(template="plotly_dark", dragmode=False)
-        fig.update_xaxes(fixedrange=True)
-        fig.update_yaxes(fixedrange=True)
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-
-# Add this to your Secrets/GID section
-
-
-# Updated Helper Function
-def manage_schedules(action, task_data=None):
-    if action == "add":
-        params = {
-            "action": "add_schedule",
-            "device": task_data['node'],
-            "date": str(task_data['date']), # YYYY-MM-DD format
-            "time": task_data['time'],
-            "state": task_data['action'],
-            "repeat": str(task_data['repeat']).upper()
-        }
-        try:
-            requests.get(WEB_APP_URL, params=params, timeout=10)
-        except: pass
-    elif action == "delete":
-        params = {"action": "del_schedule", "id": task_data}
-        try:
-            requests.get(WEB_APP_URL, params=params, timeout=10)
-        except: pass
-
-# --- SIDEBAR UI ---
-st.sidebar.subheader("📅 Permanent Scheduler")
-with st.sidebar.expander("➕ Create 24/7 Timer", expanded=False):
-    t_node = st.selectbox("Device", ["MAIN", "ESSENTIAL", "NON_ESSENTIAL"])
-    t_action = st.radio("Action", ["ON", "OFF"], horizontal=True)
-    t_date = st.date_input("Trigger Date", value=datetime.now().date())
-    t_time = st.text_input("Time (HH:MM)", value=datetime.now().strftime("%H:%M"))
-    t_rep = st.checkbox("Repeat Daily", value=True, help="If checked, date is ignored.")
-    
-    if st.button("Save to Cloud"):
-        with st.spinner("Syncing..."):
-            manage_schedules("add", {
-                'node': t_node, 'date': t_date, 'time': t_time, 
-                'action': t_action, 'repeat': t_rep
-            })
-            st.success("Timer Active in Cloud!")
-            time.sleep(1)
-            st.rerun()
-
-# Display Current Cloud Timers
-df_sched = load_data(S_GID)
-if not df_sched.empty:
-    st.sidebar.markdown("---")
-    st.sidebar.write("📜 **Active Cloud Timers**")
-    for index, row in df_sched.iterrows():
-        with st.sidebar.container(border=True):
-            # Display Date if it's a one-time trigger
-            time_label = f"Daily @ {row['Time']}" if str(row['Repeat']).upper() == "TRUE" else f"{row['Date']} @ {row['Time']}"
-            st.write(f"⏰ {time_label}")
-            st.write(f"**{row['Device']}** → **{row['Action']}**")
-            if st.button("Delete", key=f"cloud_del_{row['ID']}"):
-                manage_schedules("delete", row['ID'])
-                st.rerun()
