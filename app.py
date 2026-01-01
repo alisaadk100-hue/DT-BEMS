@@ -25,23 +25,18 @@ DEVICES = {
 # --- 3. DATA LOADING ---
 def load_data():
     try:
-        # 1. Ensure this is your EXACT BEMS_Live GID
-        # Common error: Using the GID of the old 'Archive' sheet.
+        # REPLACE with the GID from your browser address bar
         BEMS_LIVE_GID = "853758052" 
         
-        # 2. Add the cache-buster timestamp
+        # 1. We MUST use format=csv so Pandas can read it
+        # 2. We MUST use the GID so it doesn't load the old 'Archive' data
         cb = int(time.time() * 1000)
+        final_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={BEMS_LIVE_GID}&v={cb}"
         
-        # 3. Construct the final URL with proper parameter separation
-        # Use '&' only after the first '?'
-        final_url = (
-            f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?"
-            f"format=csv&gid={BEMS_LIVE_GID}&v={cb}"
-        )
-        
+        # Pulling the CSV stream directly into a DataFrame
         df = pd.read_csv(final_url, on_bad_lines='skip', engine='python')
         
-        # Clean column names for the KeyError fix
+        # Clean column names to prevent KeyError: 'M_Pow'
         df.columns = [str(col).strip() for col in df.columns]
         
         if 'Timestamp' in df.columns:
@@ -49,10 +44,8 @@ def load_data():
             
         return df
     except Exception as e:
-        # This will now show more detail if the 400 persists
         st.error(f"Sync Error: {e}")
         return pd.DataFrame()
-
 # --- 4. NAVIGATION & CONTROL ---
 if 'page' not in st.session_state: st.session_state.page = 'Home'
 if 'selected_param' not in st.session_state: st.session_state.selected_param = None
@@ -201,5 +194,6 @@ if latest is not None:
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning(f"No data available for {selected_date}")
+
 
 
