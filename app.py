@@ -25,19 +25,31 @@ DEVICES = {
 # --- 3. DATA LOADING ---
 def load_data():
     try:
-        cb = int(time.time() * 1000) + random.randint(1, 1000)
-        # REPLACE 123456789 with the actual GID of your BEMS_Live tab
-        final_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=123456789&v={cb}"
+        # 1. Ensure this is your EXACT BEMS_Live GID
+        # Common error: Using the GID of the old 'Archive' sheet.
+        BEMS_LIVE_GID = "853758052" 
+        
+        # 2. Add the cache-buster timestamp
+        cb = int(time.time() * 1000)
+        
+        # 3. Construct the final URL with proper parameter separation
+        # Use '&' only after the first '?'
+        final_url = (
+            f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?"
+            f"format=csv&gid={BEMS_LIVE_GID}&v={cb}"
+        )
         
         df = pd.read_csv(final_url, on_bad_lines='skip', engine='python')
         
-        # This line is critical: it removes hidden spaces from column names
+        # Clean column names for the KeyError fix
         df.columns = [str(col).strip() for col in df.columns]
         
         if 'Timestamp' in df.columns:
             df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+            
         return df
     except Exception as e:
+        # This will now show more detail if the 400 persists
         st.error(f"Sync Error: {e}")
         return pd.DataFrame()
 
@@ -189,4 +201,5 @@ if latest is not None:
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning(f"No data available for {selected_date}")
+
 
