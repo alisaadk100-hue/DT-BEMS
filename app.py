@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import requests
+import time # Add this at the very top of your script
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
@@ -29,24 +30,20 @@ def load_data():
         return pd.DataFrame() # Return empty if sheet is offline
 
 # --- 4. RELAY CONTROL FUNCTION ---
+
+
 def send_relay_command(state):
-    """Sends action=control to Google Script"""
-    params = {
-        "action": "control",
-        "id": RELAY_ID,
-        "value": "true" if state else "false" # Scripts expect string booleans
-    }
+    params = {"action": "control", "id": RELAY_ID, "value": "true" if state else "false"}
     try:
-        # Sending request to Google Apps Script
         response = requests.get(WEB_APP_URL, params=params, timeout=15)
         if response.status_code == 200:
-            st.cache_data.clear() # Clear cache so "After" data shows up immediately
+            st.cache_data.clear() # Clear the old data
+            time.sleep(3) # Wait 3 seconds for the sheet to catch up
             return True
         return False
     except Exception as e:
         st.sidebar.error(f"Control Error: {e}")
         return False
-
 # --- 5. INITIAL DATA FETCH ---
 df = load_data()
 latest = None
@@ -128,3 +125,4 @@ if latest is not None:
 else:
     st.warning("⚠️ Connecting to Digital Twin Data Stream...")
     st.info("Check your Google Sheet CSV Link if this persists.")
+
