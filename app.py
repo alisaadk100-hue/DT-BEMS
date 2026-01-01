@@ -16,6 +16,7 @@ WEB_APP_URL = "https://script.google.com/macros/s/AKfycby3BXsDHRsuGg_01KC5xGAm4e
 SHEET_ID = "1RSHAh23D4NPwNEU9cD5JbsMsYeZVYVTUfG64_4r-zsU"
 BEMS_LIVE_GID = "853758052" 
 ARCHIVE_GID = "0" 
+S_GID = "2105792506" 
 
 DEVICES = {
     "MAIN": "bf44d7e214c9e67fa8vhoy",
@@ -188,3 +189,60 @@ elif st.session_state.page == 'Detail':
         fig.update_xaxes(fixedrange=True)
         fig.update_yaxes(fixedrange=True)
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+# Add this to your Secrets/GID section
+
+
+# Updated Helper Function
+def manage_schedules(action, task_data=None):
+    if action == "add":
+        params = {
+            "action": "add_schedule",
+            "device": task_data['node'],
+            "date": str(task_data['date']), # YYYY-MM-DD format
+            "time": task_data['time'],
+            "state": task_data['action'],
+            "repeat": str(task_data['repeat']).upper()
+        }
+        try:
+            requests.get(WEB_APP_URL, params=params, timeout=10)
+        except: pass
+    elif action == "delete":
+        params = {"action": "del_schedule", "id": task_data}
+        try:
+            requests.get(WEB_APP_URL, params=params, timeout=10)
+        except: pass
+
+# --- SIDEBAR UI ---
+st.sidebar.subheader("📅 Permanent Scheduler")
+with st.sidebar.expander("➕ Create 24/7 Timer", expanded=False):
+    t_node = st.selectbox("Device", ["MAIN", "ESSENTIAL", "NON_ESSENTIAL"])
+    t_action = st.radio("Action", ["ON", "OFF"], horizontal=True)
+    t_date = st.date_input("Trigger Date", value=datetime.now().date())
+    t_time = st.text_input("Time (HH:MM)", value=datetime.now().strftime("%H:%M"))
+    t_rep = st.checkbox("Repeat Daily", value=True, help="If checked, date is ignored.")
+    
+    if st.button("Save to Cloud"):
+        with st.spinner("Syncing..."):
+            manage_schedules("add", {
+                'node': t_node, 'date': t_date, 'time': t_time, 
+                'action': t_action, 'repeat': t_rep
+            })
+            st.success("Timer Active in Cloud!")
+            time.sleep(1)
+            st.rerun()
+
+# Display Current Cloud Timers
+df_sched = load_data(S_GID)
+if not df_sched.empty:
+    st.sidebar.markdown("---")
+    st.sidebar.write("📜 **Active Cloud Timers**")
+    for index, row in df_sched.iterrows():
+        with st.sidebar.container(border=True):
+            # Display Date if it's a one-time trigger
+            time_label = f"Daily @ {row['Time']}" if str(row['Repeat']).upper() == "TRUE" else f"{row['Date']} @ {row['Time']}"
+            st.write(f"⏰ {time_label}")
+            st.write(f"**{row['Device']}** → **{row['Action']}**")
+            if st.button("Delete", key=f"cloud_del_{row['ID']}"):
+                manage_schedules("delete", row['ID'])
+                st.rerun()
