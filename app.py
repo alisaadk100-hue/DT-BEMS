@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests
 import time # Add this at the very top of your script
+import random
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
@@ -25,15 +26,26 @@ RELAY_ID = "bf44d7e214c9e67fa8vhoy" # Your specific Tuya Device ID
 SHEET_ID = "1RSHAh23D4NPwNEU9cD5JbsMsYeZVYVTUfG64_4r-zsU"
 DIRECT_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
+
+
 def load_data():
     try:
-        # We add the cache-buster timestamp to ensure Google doesn't send an old version
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        final_url = f"{DIRECT_URL}&v={timestamp}"
+        # 1. Create a unique 'Cache Buster' using milliseconds + a random number
+        # This prevents Google from serving a 'remembered' version of the file.
+        cb = int(time.time() * 1000) + random.randint(1, 1000)
         
+        # 2. Construct the Direct Export URL with the unique buster
+        # Using &v= instead of ?v= if your URL already has parameters
+        final_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&v={cb}"
+        
+        # 3. Request data with a very short timeout
         df = pd.read_csv(final_url, on_bad_lines='skip', engine='python')
+        
+        # Clean columns and convert time
         df.columns = [str(col).strip() for col in df.columns]
-        df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+        if 'Timestamp' in df.columns:
+            df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+            
         return df
     except Exception as e:
         st.error(f"Sync Error: {e}")
@@ -49,7 +61,7 @@ def send_relay_command(state):
     }
     try:
         # Increased timeout from 15 to 30 to prevent the 'Read timed out' error
-        response = requests.get(WEB_APP_URL, params=params, timeout=30) 
+        response = requests.get(WEB_APP_URL, params=params, timeout=50) 
         if response.status_code == 200:
             st.cache_data.clear() 
             return True
@@ -91,21 +103,18 @@ st.sidebar.subheader("Manual Load Control")
 col_on, col_off = st.sidebar.columns(2)
 
 if col_on.button("🟢 RESTORE", use_container_width=True):
-    with st.spinner("Restoring Power..."):
+    with st.spinner("Hardware warming up... Verifying Grid Recovery (45s)"):
         if send_relay_command(True):
-            # 1. Clear cache to prepare for new data
-            st.cache_data.clear() 
-            # 2. Wait for Google Script to finish its 5s post-log
-            st.sidebar.success("Relay: ON")
-            # 3. Force refresh the UI
-          
-
+            st.cache_data.clear()
+            time.sleep(40) # Matches the new Google Script total time
+            st.rerun()
 
 if col_off.button("🔴 SHED", use_container_width=True):
-    if send_relay_command(False):
-        st.cache_data.clear()
-        st.sidebar.warning("Shedding Command Sent...")
-        # No more long sleep here; the 5s refresh will pick up the logs!
+    with st.spinner("Shedding Load... Verifying Grid (25s)"):
+        if send_relay_command(False):
+            st.cache_data.clear()
+            time.sleep(25) # Matches the shorter Shed wait
+            st.rerun()
             
 st.sidebar.markdown("---")
 st.sidebar.info("Note: Essential loads (Lights/Fans) are protected.")
@@ -145,6 +154,7 @@ if latest is not None:
 else:
     st.warning("⚠️ Connecting to Digital Twin Data Stream...")
     st.info("Check your Google Sheet CSV Link if this persists.")
+
 
 
 
