@@ -4,22 +4,29 @@ import plotly.graph_objects as go
 import requests
 import time
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
 # --- 1. CONFIG & REFRESH ---
 st.set_page_config(page_title="BEMS Digital Twin - B Block", layout="wide", initial_sidebar_state="expanded")
-st_autorefresh(interval=60* 1000, key="bems_heartbeat")
+st_autorefresh(interval=5 * 1000, key="bems_heartbeat")
 
 # --- 2. SECRETS & URLs ---
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycby3BXsDHRsuGg_01KC5xGAm4ebKnMEGinmkfxtZwuMebuR87AZzgCeidgeytVoVezFvqA/exec"
-RELAY_ID = "bf44d7e214c9e67fa8vhoy" 
 SHEET_ID = "1RSHAh23D4NPwNEU9cD5JbsMsYeZVYVTUfG64_4r-zsU"
+
+# Hardware Mapping
+DEVICES = {
+    "MAIN": "bf44d7e214c9e67fa8vhoy",
+    "ESSENTIAL": "bf4c09baef731734aehesx",
+    "NON_ESSENTIAL": "bff5d56df73071b658rk9b"
+}
 
 # --- 3. DATA LOADING ---
 def load_data():
     try:
         cb = int(time.time() * 1000) + random.randint(1, 1000)
+        # Use your new GID for the BEMS_Live tab
         final_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&v={cb}"
         df = pd.read_csv(final_url, on_bad_lines='skip', engine='python')
         df.columns = [str(col).strip() for col in df.columns]
@@ -38,8 +45,8 @@ def go_to_page(p, param=None):
     st.session_state.page = p
     st.session_state.selected_param = param
 
-def send_relay_command(state):
-    params = {"action": "control", "id": RELAY_ID, "value": "true" if state else "false"}
+def send_relay_command(dev_key, state):
+    params = {"action": "control", "id": DEVICES[dev_key], "value": "true" if state else "false"}
     try:
         response = requests.get(WEB_APP_URL, params=params, timeout=60) 
         return response.status_code == 200
@@ -47,85 +54,101 @@ def send_relay_command(state):
         st.sidebar.error(f"Control Error: {e}")
         return False
 
-# --- 5. INITIAL DATA FETCH & OFFLINE CHECK ---
+# --- 5. INITIAL DATA FETCH ---
 df = load_data()
 latest = df.iloc[-1] if not df.empty else None
 
+# Status logic based on Main Switch
 is_offline = False
 try:
+    # Use your Google Script's offline detection for the Main Switch
     status_check = requests.get(WEB_APP_URL, timeout=5).text
-    if "OFFLINE" in status_check:
-        is_offline = True
-except:
-    pass
-
-current_p = float(latest['Power']) if latest is not None and not is_offline else 0.0
-is_active = current_p > 5.0 and not is_offline
+    if "OFFLINE" in status_check: is_offline = True
+except: pass
 
 # --- 6. SIDEBAR CONTROL CENTER ---
 st.sidebar.title("🕹️ BEMS Control Panel")
 st.sidebar.markdown("---")
 
-if is_offline:
-    st.sidebar.error("🚨 POWER OUTAGE DETECTED")
-    st.sidebar.markdown("**Hardware is Offline.** Showing last known switch state.")
-elif is_active:
-    st.sidebar.success("✅ GRID STATUS: ACTIVE")
-    st.sidebar.write(f"Current Load: {current_p} W")
-else:
-    st.sidebar.warning("⚡ GRID STATUS: SHEDDED")
-    st.sidebar.write("AC Units are Powered OFF")
+def render_sidebar_switch(label, dev_key, pow_col):
+    st.sidebar.subheader(label)
+    p_val = float(latest[pow_col]) if latest is not None else 0.0
+    
+    if is_offline and dev_key == "MAIN":
+        st.sidebar.error("🚨 MAIN GRID OFFLINE")
+    elif p_val > 5.0:
+        st.sidebar.success(f"ONLINE: {p_val} W")
+    else:
+        st.sidebar.warning("SHEDDED / OFF")
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("Manual Load Control")
-col_on, col_off = st.sidebar.columns(2)
-
-if col_on.button("🟢 RESTORE", use_container_width=True):
-    with st.spinner("Restoring Power..."):
-        if send_relay_command(True):
+    c1, c2 = st.sidebar.columns(2)
+    if c1.button("🟢 ON", key=f"on_{dev_key}", use_container_width=True):
+        if send_relay_command(dev_key, True):
             time.sleep(40)
             st.rerun()
-
-if col_off.button("🔴 SHED", use_container_width=True):
-    with st.spinner("Shedding Load..."):
-        if send_relay_command(False):
-            time.sleep(25) 
+    if c2.button("🔴 OFF", key=f"off_{dev_key}", use_container_width=True):
+        if send_relay_command(dev_key, False):
+            time.sleep(25)
             st.rerun()
+    st.sidebar.markdown("---")
+
+if latest is not None:
+    render_sidebar_switch("Main Building", "MAIN", "M_Pow")
+    render_sidebar_switch("Essential (Lights)", "ESSENTIAL", "E_Pow")
+    render_sidebar_switch("Non-Essential (AC)", "NON_ESSENTIAL", "NE_Pow")
 
 # --- 7. MAIN DASHBOARD UI ---
 if latest is not None:
     if st.session_state.page == 'Home':
-        st.title("⚡ BEMS Digital Twin - B Block")
+        st.title("⚡ BEMS Triple-Node Digital Twin")
         
+        # PRIMARY METRICS (MAIN SWITCH)
+        st.markdown("### 🏛️ Main Building Overview")
         m1, m2, m3, m4, m5 = st.columns(5)
-        with m1: 
-            st.metric("Voltage", f"{latest['Voltage'] if not is_offline else 0:.1f} V")
-            st.button("Analyze V", on_click=go_to_page, args=('Detail', 'Voltage'))
-        with m2: 
-            st.metric("Current", f"{latest['Current'] if not is_offline else 0:.2f} A")
-            st.button("Analyze I", on_click=go_to_page, args=('Detail', 'Current'))
-        with m3: 
-            st.metric("Power", f"{int(latest['Power']) if not is_offline else 0} W")
-            st.button("Analyze P", on_click=go_to_page, args=('Detail', 'Power'))
-        with m4: 
-            # Temp logic: Show last known even during outage
-            st.metric("Switch Temp", f"{latest['Temp']:.1f} °C")
-            st.caption("Internal Hardware Temp")
-            st.button("Analyze T", on_click=go_to_page, args=('Detail', 'Temp'))
+        with m1:
+            st.metric("Voltage", f"{latest['M_Volt'] if not is_offline else 0:.1f} V")
+            st.button("Analyze M_V", on_click=go_to_page, args=('Detail', 'M_Volt'))
+        with m2:
+            st.metric("Current", f"{latest['M_Curr'] if not is_offline else 0:.2f} A")
+            st.button("Analyze M_I", on_click=go_to_page, args=('Detail', 'M_Curr'))
+        with m3:
+            st.metric("Power", f"{int(latest['M_Pow']) if not is_offline else 0} W")
+            st.button("Analyze M_P", on_click=go_to_page, args=('Detail', 'M_Pow'))
+        with m4:
+            st.metric("Switch Temp", f"{latest['M_Temp']:.1f} °C")
+            st.button("Analyze M_T", on_click=go_to_page, args=('Detail', 'M_Temp'))
         with m5:
-            today_kwh = df[df['Timestamp'].dt.date == datetime.now().date()]['kWh_Interval'].sum()
-            st.metric("Usage (Today)", f"{today_kwh:.3f} kWh")
-            st.button("Analyze E", on_click=go_to_page, args=('Detail', 'kWh_Interval'))
+            today_kwh = df[df['Timestamp'].dt.date == datetime.now().date()]['M_kWh'].sum()
+            st.metric("Main Energy", f"{today_kwh:.3f} kWh")
+            st.button("Analyze M_E", on_click=go_to_page, args=('Detail', 'M_kWh'))
 
-        # MAIN PAGE: Hourly Power Consumption in Watts
-        st.markdown("### 📊 Hourly Power Consumption (Watts)")
+        # SUB-METERING OVERVIEW
+        st.markdown("---")
+        st.markdown("### 🔌 Sub-Circuit Load Distribution")
+        s1, s2 = st.columns(2)
+        with s1:
+            st.subheader("Essential (Lights/Fans)")
+            st.metric("Current Load", f"{latest['E_Pow']} W")
+            st.button("Analyze Essential Power", on_click=go_to_page, args=('Detail', 'E_Pow'))
+        with s2:
+            st.subheader("Non-Essential (AC Units)")
+            st.metric("Current Load", f"{latest['NE_Pow']} W")
+            st.button("Analyze Non-Essential Power", on_click=go_to_page, args=('Detail', 'NE_Pow'))
+
+        # HOURLY POWER COMPARISON
+        st.markdown("### 📊 Power Consumption Comparison (Watts)")
         today_df = df[df['Timestamp'].dt.date == datetime.now().date()].copy()
         if not today_df.empty:
-            hourly_avg_p = today_df.resample('H', on='Timestamp')['Power'].mean().reset_index()
-            fig = go.Figure(go.Bar(x=hourly_avg_p['Timestamp'], y=hourly_avg_p['Power'], marker_color='#FFAA00'))
-            fig.update_xaxes(fixedrange=True, title="Hour")
-            fig.update_yaxes(fixedrange=True, title="Power (W)")
-            fig.update_layout(template="plotly_dark", dragmode=False)
+            h_m = today_df.resample('H', on='Timestamp')['M_Pow'].mean().reset_index()
+            h_e = today_df.resample('H', on='Timestamp')['E_Pow'].mean().reset_index()
+            h_ne = today_df.resample('H', on='Timestamp')['NE_Pow'].mean().reset_index()
+            
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=h_m['Timestamp'], y=h_m['M_Pow'], name='Main', marker_color='#FFAA00'))
+            fig.add_trace(go.Bar(x=h_e['Timestamp'], y=h_e['E_Pow'], name='Essential', marker_color='#00FF00'))
+            fig.add_trace(go.Bar(x=h_ne['Timestamp'], y=h_ne['NE_Pow'], name='Non-Essential', marker_color='#FF4B4B'))
+            
+            fig.update_layout(template="plotly_dark", barmode='group', dragmode=False)
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
     # --- DETAIL PAGE ---
@@ -138,26 +161,20 @@ if latest is not None:
         day_df = df[df['Timestamp'].dt.date == selected_date].copy()
 
         if not day_df.empty:
-            if target == "kWh_Interval":
-                total_usage = day_df['kWh_Interval'].sum()
+            if "kWh" in target:
+                total_usage = day_df[target].sum()
                 st.metric("Total Daily Consumption", f"{total_usage:.4f} kWh")
                 
-                # Double Bar Graph for Energy
-                tab1, tab2 = st.tabs(["Hourly (Watts)", "Daily Total (kWh)"])
-                with tab1:
-                    h_p = day_df.resample('H', on='Timestamp')['Power'].mean().reset_index()
-                    f_h = go.Figure(go.Bar(x=h_p['Timestamp'], y=h_p['Power'], marker_color='#00FF00'))
-                    f_h.update_layout(template="plotly_dark", xaxis_title="Hour", yaxis_title="Average Power (W)")
-                    st.plotly_chart(f_h, use_container_width=True)
-                with tab2:
-                    d_usage = pd.DataFrame({'Metric': ['Total Daily'], 'Value': [total_usage]})
-                    f_d = go.Figure(go.Bar(x=d_usage['Metric'], y=d_usage['Value'], marker_color='#00CCFF'))
-                    f_d.update_layout(template="plotly_dark", yaxis_title="Energy (kWh)")
-                    st.plotly_chart(f_d, use_container_width=True)
+                # Show hourly distribution for this specific circuit
+                pow_col = target.replace("kWh", "Pow") 
+                h_p = day_df.resample('H', on='Timestamp')[pow_col].mean().reset_index()
+                f_h = go.Figure(go.Bar(x=h_p['Timestamp'], y=h_p[pow_col], marker_color='#00FF00'))
+                f_h.update_layout(template="plotly_dark", xaxis_title="Hour", yaxis_title="Power (W)")
+                st.plotly_chart(f_h, use_container_width=True)
             else:
                 s1, s2 = st.columns(2)
                 s1.metric("Maximum", f"{day_df[target].max():.2f}")
-                if target in ["Voltage", "Current"]:
+                if "Volt" in target or "Curr" in target:
                     active_min = day_df[day_df[target] > 0.1][target].min()
                     s2.metric("Min (Active)", f"{active_min if pd.notnull(active_min) else 0:.2f}")
                 else:
@@ -168,6 +185,3 @@ if latest is not None:
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning(f"No data available for {selected_date}")
-
-
-
