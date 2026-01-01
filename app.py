@@ -25,18 +25,31 @@ DEVICES = {
 # --- 3. DATA LOADING ---
 def load_data():
     try:
-        # REPLACE with the GID from your browser address bar
+        # 1. VERIFY THESE TWO VALUES
+        # Open your BEMS_Live tab and copy the 'gid' from the URL bar
         BEMS_LIVE_GID = "853758052" 
         
-        # 1. We MUST use format=csv so Pandas can read it
-        # 2. We MUST use the GID so it doesn't load the old 'Archive' data
         cb = int(time.time() * 1000)
         final_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={BEMS_LIVE_GID}&v={cb}"
         
-        # Pulling the CSV stream directly into a DataFrame
+        # --- DIAGNOSTIC LOGGING ---
+        st.write(f"🔍 DEBUG: Attempting to fetch from GID: {BEMS_LIVE_GID}")
+        
+        response = requests.get(final_url)
+        if response.status_code != 200:
+            st.error(f"❌ Google rejected the request. Status Code: {response.status_code}")
+            st.write("Reason:", response.text[:200]) # Shows why Google said 'Bad Request'
+            return pd.DataFrame()
+
+        # Try to read the CSV
         df = pd.read_csv(final_url, on_bad_lines='skip', engine='python')
         
-        # Clean column names to prevent KeyError: 'M_Pow'
+        # 2. SHOW FOUND COLUMNS
+        found_cols = list(df.columns)
+        st.sidebar.info(f"✅ Sheet Connected! Found {len(found_cols)} columns.")
+        st.sidebar.write("Columns:", found_cols)
+        
+        # Clean the columns
         df.columns = [str(col).strip() for col in df.columns]
         
         if 'Timestamp' in df.columns:
@@ -44,7 +57,7 @@ def load_data():
             
         return df
     except Exception as e:
-        st.error(f"Sync Error: {e}")
+        st.error(f"⚠️ Critical Load Error: {e}")
         return pd.DataFrame()
 # --- 4. NAVIGATION & CONTROL ---
 if 'page' not in st.session_state: st.session_state.page = 'Home'
@@ -194,6 +207,7 @@ if latest is not None:
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning(f"No data available for {selected_date}")
+
 
 
 
