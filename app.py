@@ -9,11 +9,11 @@ from streamlit_autorefresh import st_autorefresh
 # --- 1. CONFIG & REFRESH ---
 st.set_page_config(page_title="BEMS Digital Twin - B Block", layout="wide", initial_sidebar_state="expanded")
 # Refresh every 30 seconds to stay in sync with Unity and the Sheet
-st_autorefresh(interval=30 * 1000, key="bems_heartbeat")
+st_autorefresh(interval=5 * 1000, key="bems_heartbeat")
 
 # --- 2. SECRETS & URLs (Replace with your actual links) ---
 # Update these with your exact URLs
-SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRP4yZn_0PQCRB9xZcNm9bKMv6vZhk6P9kjEFX6iuXh-71ExjMWK6uRLqnZ12BgKJDtwo8a8jYRXPAf/pub?gid=0&single=true&output=csv" 
+
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycby3BXsDHRsuGg_01KC5xGAm4ebKnMEGinmkfxtZwuMebuR87AZzgCeidgeytVoVezFvqA/exec"
 RELAY_ID = "bf44d7e214c9e67fa8vhoy" # Your specific Tuya Device ID
 
@@ -21,28 +21,37 @@ RELAY_ID = "bf44d7e214c9e67fa8vhoy" # Your specific Tuya Device ID
 # Remove @st.cache_data entirely for your presentation to get LIVE data
 
 
+# Replace YOUR_SHEET_ID with your actual ID
+SHEET_ID = "1RSHAh23D4NPwNEU9cD5JbsMsYeZVYVTUfG64_4r-zsU"
+DIRECT_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+
 def load_data():
     try:
-        # The '?v=' part forces Google to bypass its 2-5 minute cache
-        cache_buster = datetime.now().strftime("%Y%m%d%H%M%S")
-        fresh_url = f"{SHEET_URL}&v={cache_buster}"
+        # We add the cache-buster timestamp to ensure Google doesn't send an old version
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        final_url = f"{DIRECT_URL}&v={timestamp}"
         
-        df = pd.read_csv(fresh_url, on_bad_lines='skip', engine='python', header=0)
+        df = pd.read_csv(final_url, on_bad_lines='skip', engine='python')
         df.columns = [str(col).strip() for col in df.columns]
         df['Timestamp'] = pd.to_datetime(df['Timestamp'])
         return df
     except Exception as e:
+        st.error(f"Sync Error: {e}")
         return pd.DataFrame()
 # --- 4. RELAY CONTROL FUNCTION ---
 
 
 def send_relay_command(state):
-    params = {"action": "control", "id": RELAY_ID, "value": "true" if state else "false"}
+    params = {
+        "action": "control",
+        "id": RELAY_ID,
+        "value": "true" if state else "false"
+    }
     try:
-        response = requests.get(WEB_APP_URL, params=params, timeout=15)
+        # Increased timeout from 15 to 30 to prevent the 'Read timed out' error
+        response = requests.get(WEB_APP_URL, params=params, timeout=30) 
         if response.status_code == 200:
-            st.cache_data.clear() # Clear the old data
-            time.sleep(3) # Wait 3 seconds for the sheet to catch up
+            st.cache_data.clear() 
             return True
         return False
     except Exception as e:
@@ -87,20 +96,16 @@ if col_on.button("🟢 RESTORE", use_container_width=True):
             # 1. Clear cache to prepare for new data
             st.cache_data.clear() 
             # 2. Wait for Google Script to finish its 5s post-log
-            time.sleep(18) 
             st.sidebar.success("Relay: ON")
             # 3. Force refresh the UI
-            st.rerun() 
+          
 
 
- if col_off.button("🔴 SHED", use_container_width=True):
-    with st.spinner("Executing Triple-Verification Shedding (18s)..."):
-        if send_relay_command(False):
-            st.cache_data.clear() 
-            # Wait 18 seconds to allow the Google Script to finish all 3 logs
-            time.sleep(18) 
-            st.sidebar.warning("Relay: OFF")
-            st.rerun()
+if col_off.button("🔴 SHED", use_container_width=True):
+    if send_relay_command(False):
+        st.cache_data.clear()
+        st.sidebar.warning("Shedding Command Sent...")
+        # No more long sleep here; the 5s refresh will pick up the logs!
             
 st.sidebar.markdown("---")
 st.sidebar.info("Note: Essential loads (Lights/Fans) are protected.")
@@ -140,6 +145,7 @@ if latest is not None:
 else:
     st.warning("⚠️ Connecting to Digital Twin Data Stream...")
     st.info("Check your Google Sheet CSV Link if this persists.")
+
 
 
 
