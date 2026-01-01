@@ -10,7 +10,7 @@ from streamlit_autorefresh import st_autorefresh
 # --- 1. CONFIG & REFRESH ---
 st.set_page_config(page_title="BEMS Digital Twin - B Block", layout="wide", initial_sidebar_state="expanded")
 # Use 5 seconds for the demo, increase to 30s for long-term use
-st_autorefresh(interval=5 * 1000, key="bems_heartbeat")
+st_autorefresh(interval=60 * 1000, key="bems_heartbeat")
 
 # --- 2. SECRETS & URLs ---
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycby3BXsDHRsuGg_01KC5xGAm4ebKnMEGinmkfxtZwuMebuR87AZzgCeidgeytVoVezFvqA/exec"
@@ -156,3 +156,4 @@ if latest is not None:
 
 else:
     st.warning("⚠️ Connecting to Digital Twin Data Stream...")
+
