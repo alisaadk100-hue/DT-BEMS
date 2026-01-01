@@ -26,10 +26,14 @@ DEVICES = {
 def load_data():
     try:
         cb = int(time.time() * 1000) + random.randint(1, 1000)
-        # Use your new GID for the BEMS_Live tab
-        final_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&v={cb}"
+        # REPLACE 123456789 with the actual GID of your BEMS_Live tab
+        final_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=123456789&v={cb}"
+        
         df = pd.read_csv(final_url, on_bad_lines='skip', engine='python')
+        
+        # This line is critical: it removes hidden spaces from column names
         df.columns = [str(col).strip() for col in df.columns]
+        
         if 'Timestamp' in df.columns:
             df['Timestamp'] = pd.to_datetime(df['Timestamp'])
         return df
@@ -185,3 +189,4 @@ if latest is not None:
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning(f"No data available for {selected_date}")
+
