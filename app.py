@@ -217,3 +217,4 @@ elif st.session_state.page == 'Detail':
         fig.update_layout(template="plotly_dark", dragmode=False)
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
+
