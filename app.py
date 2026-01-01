@@ -205,16 +205,42 @@ elif st.session_state.page == 'NodeDetail':
             st.button(f"Analyze {suf}", key=f"det_{col}", on_click=go_to_page, args=('Detail', node, col))
 
 # --- 10. GRAPH DETAIL PAGE ---
+# --- 10. GRAPH DETAIL PAGE ---
 elif st.session_state.page == 'Detail':
     target = st.session_state.selected_param
     st.button("← Back", on_click=go_to_page, args=('Home' if st.session_state.selected_node in ['MAIN', 'ARCHIVE'] else 'NodeDetail', st.session_state.selected_node))
+    
     st.header(f"📈 Historical Analysis: {target}")
-    curr_df = load_data(ARCHIVE_GID) if st.session_state.selected_node == "ARCHIVE" else df_live
+    
+    # Force a fresh load for the Archive to ensure current data is present
+    curr_df = load_data(ARCHIVE_GID) if st.session_state.selected_node == "ARCHIVE" else load_data(BEMS_LIVE_GID)
+    
     selected_date = st.date_input("Select Date", value=datetime.now().date())
-    day_df = curr_df[curr_df['Timestamp'].dt.date == selected_date].copy() if not curr_df.empty else pd.DataFrame()
-    if not day_df.empty:
-        fig = go.Figure(go.Scatter(x=day_df['Timestamp'], y=day_df[target], mode='lines', fill='tozeroy', line=dict(color='#FFAA00')))
-        fig.update_layout(template="plotly_dark", dragmode=False)
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-
-
+    
+    # Ensure Timestamp is localized to compare with selected_date
+    if not curr_df.empty:
+        day_df = curr_df[curr_df['Timestamp'].dt.date == selected_date].copy()
+        
+        if not day_df.empty:
+            # Main Analysis Graph
+            fig = go.Figure(go.Scatter(x=day_df['Timestamp'], y=day_df[target], 
+                                     mode='lines', fill='tozeroy', 
+                                     line=dict(color='#FFAA00', width=2)))
+            
+            fig.update_layout(
+                title=f"{target} Trend for {selected_date}",
+                template="plotly_dark", 
+                dragmode=False,
+                xaxis_title="Time of Day",
+                yaxis_title=f"Value ({target})",
+                height=500
+            )
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+            
+            # Show summary stats for the selected day
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Peak Value", f"{day_df[target].max():.2f}")
+            c2.metric("Average", f"{day_df[target].mean():.2f}")
+            c3.metric("Data Points", len(day_df))
+        else:
+            st.warning(f"No data found for {selected_date}. Please check the BEMS_Live sheet.")
