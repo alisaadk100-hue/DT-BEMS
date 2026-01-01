@@ -9,7 +9,7 @@ from streamlit_autorefresh import st_autorefresh
 
 # --- 1. CONFIG & REFRESH ---
 st.set_page_config(page_title="BEMS Digital Twin - B Block", layout="wide", initial_sidebar_state="expanded")
-# Use 5 seconds for the demo, increase to 30s for long-term use
+# Refresh interval set for responsiveness
 st_autorefresh(interval=60 * 1000, key="bems_heartbeat")
 
 # --- 2. SECRETS & URLs ---
@@ -17,11 +17,11 @@ WEB_APP_URL = "https://script.google.com/macros/s/AKfycby3BXsDHRsuGg_01KC5xGAm4e
 RELAY_ID = "bf44d7e214c9e67fa8vhoy" 
 SHEET_ID = "1RSHAh23D4NPwNEU9cD5JbsMsYeZVYVTUfG64_4r-zsU"
 
-# --- 3. DATA LOADING (Direct Export & Cache-Buster) ---
+# --- 3. DATA LOADING ---
 def load_data():
     try:
         cb = int(time.time() * 1000) + random.randint(1, 1000)
-        # Using Direct Export to bypass the 5-minute Google 'Publish' lag
+        # Using Direct Export to bypass the lag
         final_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&v={cb}"
         
         df = pd.read_csv(final_url, on_bad_lines='skip', engine='python')
@@ -44,23 +44,26 @@ def go_to_page(p, param=None):
 def send_relay_command(state):
     params = {"action": "control", "id": RELAY_ID, "value": "true" if state else "false"}
     try:
-        # Timeout set to 60 for the long Triple-Verification process
+        # Long timeout for the triple-verification process
         response = requests.get(WEB_APP_URL, params=params, timeout=60) 
         return response.status_code == 200
     except Exception as e:
         st.sidebar.error(f"Control Error: {e}")
         return False
 
-# --- 5. INITIAL DATA FETCH ---
+# --- 5. INITIAL DATA FETCH & OFFLINE CHECK ---
 df = load_data()
 latest = df.iloc[-1] if not df.empty else None
-# Offline Detection: If no data for > 2 mins, assume outage
-is_offline = False
-if latest is not None:
-    diff = (datetime.now() - latest['Timestamp']).total_seconds() / 60
-    if diff > 2.0: is_offline = True
 
-# Logic for Grid Status
+# Check Hardware Status directly from your new Google Script logic
+is_offline = False
+try:
+    status_check = requests.get(WEB_APP_URL, timeout=5).text
+    if "OFFLINE" in status_check:
+        is_offline = True
+except:
+    pass
+
 current_p = float(latest['Power']) if latest is not None and not is_offline else 0.0
 is_active = current_p > 5.0 and not is_offline
 
@@ -71,12 +74,13 @@ st.sidebar.markdown("---")
 # LIVE STATUS INDICATOR
 st.sidebar.subheader("Live System Status")
 if is_offline:
-    st.sidebar.warning("⚠️ STATUS: OFFLINE (No Data)")
+    st.sidebar.error("🚨 POWER OUTAGE DETECTED")
+    st.sidebar.markdown("**Hardware is Offline.** Data forced to 0.")
 elif is_active:
     st.sidebar.success("✅ GRID STATUS: ACTIVE")
     st.sidebar.write(f"Current Load: {current_p} W")
 else:
-    st.sidebar.error("🚨 GRID STATUS: SHEDDED")
+    st.sidebar.warning("⚡ GRID STATUS: SHEDDED")
     st.sidebar.write("Non-Essential Loads are OFF")
 
 st.sidebar.markdown("---")
@@ -86,9 +90,9 @@ st.sidebar.subheader("Manual Load Control")
 col_on, col_off = st.sidebar.columns(2)
 
 if col_on.button("🟢 RESTORE", use_container_width=True):
-    with st.spinner("Stabilizing Hardware... (45s)"):
+    with st.spinner("Restoring Power... (45s)"):
         if send_relay_command(True):
-            time.sleep(40) # Allow Google Script to finish triple-logging
+            time.sleep(40) 
             st.rerun()
 
 if col_off.button("🔴 SHED", use_container_width=True):
@@ -105,13 +109,13 @@ if latest is not None:
         # Metrics Row
         m1, m2, m3, m4, m5 = st.columns(5)
         with m1: 
-            st.metric("Voltage", f"{latest['Voltage']:.1f} V")
+            st.metric("Voltage", f"{latest['Voltage'] if not is_offline else 0:.1f} V")
             st.button("Analyze V", on_click=go_to_page, args=('Detail', 'Voltage'))
         with m2: 
-            st.metric("Current", f"{latest['Current']:.2f} A")
+            st.metric("Current", f"{latest['Current'] if not is_offline else 0:.2f} A")
             st.button("Analyze I", on_click=go_to_page, args=('Detail', 'Current'))
         with m3: 
-            st.metric("Power", f"{int(latest['Power'])} W")
+            st.metric("Power", f"{int(latest['Power']) if not is_offline else 0} W")
             st.button("Analyze P", on_click=go_to_page, args=('Detail', 'Power'))
         with m4: 
             st.metric("Temp", f"{latest['Temp']:.1f} °C")
@@ -121,15 +125,17 @@ if latest is not None:
             st.metric("Energy (Today)", f"{today_kwh:.3f} kWh")
             st.button("Analyze E", on_click=go_to_page, args=('Detail', 'kWh_Interval'))
 
-        # NEW: Daily Energy Usage Graph
+        # Hourly kWh Bar Chart
         st.markdown("### 📊 Daily Energy Consumption (Hourly kWh)")
         today_df = df[df['Timestamp'].dt.date == datetime.now().date()].copy()
         if not today_df.empty:
-            # Resample to hourly sums for a clean consumption view
             hourly_kwh = today_df.resample('H', on='Timestamp')['kWh_Interval'].sum().reset_index()
             fig = go.Figure(go.Bar(x=hourly_kwh['Timestamp'], y=hourly_kwh['kWh_Interval'], marker_color='#FFAA00'))
-            fig.update_layout(template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20), xaxis_title="Time", yaxis_title="kWh")
-            st.plotly_chart(fig, use_container_width=True)
+            # MOBILE FIX: Disable drag to allow scrolling
+            fig.update_xaxes(fixedrange=True)
+            fig.update_yaxes(fixedrange=True)
+            fig.update_layout(template="plotly_dark", margin=dict(l=10, r=10, t=10, b=10), dragmode=False)
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         else:
             st.info("No consumption data recorded for today yet.")
 
@@ -139,21 +145,30 @@ if latest is not None:
         st.button("← Back to Overview", on_click=go_to_page, args=('Home',))
         st.header(f"📊 Historical {target} Analysis")
 
-        # Fixed Calendar Logic: Defaults to current day
+        # Calendar Defaults to Today
         selected_date = st.date_input("Select Date", value=datetime.now().date())
         day_df = df[df['Timestamp'].dt.date == selected_date].copy()
 
         if not day_df.empty:
             s1, s2, s3 = st.columns(3)
-            s1.info(f"**Max**: {day_df[target].max():.2f}")
-            s2.info(f"**Avg**: {day_df[target].mean():.2f}")
-            s3.info(f"**Min**: {day_df[target].min():.2f}")
+            s1.metric("Maximum", f"{day_df[target].max():.2f}")
+            
+            # Electrical Metric Logic: Min Active vs Average
+            if target in ["Voltage", "Current"]:
+                active_min = day_df[day_df[target] > 0.1][target].min()
+                s2.metric("Minimum (Active)", f"{active_min if pd.notnull(active_min) else 0:.2f}")
+                st.info("Voltage and Current analysis excludes outage zeros to show grid stability.")
+            else:
+                s2.metric("Average", f"{day_df[target].mean():.2f}")
+                s3.metric("Minimum", f"{day_df[target].min():.2f}")
 
+            # Historical Line Graph
             fig = go.Figure(go.Scatter(x=day_df['Timestamp'], y=day_df[target], mode='lines', fill='tozeroy', line=dict(color='#00FF00')))
-            st.plotly_chart(fig.update_layout(template="plotly_dark"), use_container_width=True)
+            fig.update_xaxes(fixedrange=True) # MOBILE SCROLL FIX
+            fig.update_yaxes(fixedrange=True)
+            fig.update_layout(template="plotly_dark", dragmode=False)
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         else:
             st.warning(f"No data available for {selected_date}")
-
 else:
     st.warning("⚠️ Connecting to Digital Twin Data Stream...")
-
