@@ -29,20 +29,28 @@ def load_data():
 
 # --- CONTROL FUNCTION ---
 def send_relay_command(state):
-    """Sends action=control to Google Script"""
     params = {
         "action": "control",
         "id": RELAY_ID,
-        "value": "true" if state else "false" # Must be strings "true"/"false"
+        "value": "true" if state else "false"
     }
     try:
-        # We use a timeout to prevent the app from hanging
-        response = requests.get(WEB_APP_URL, params=params, timeout=10)
-        return response.status_code == 200
+        response = requests.get(WEB_APP_URL, params=params, timeout=15)
+        if response.status_code == 200:
+            # FORCE REFRESH: This clears the 15-second cache immediately
+            st.cache_data.clear() 
+            return True
+        return False
     except Exception as e:
         st.error(f"Control Error: {e}")
         return False
 
+# In your Sidebar:
+if col_off.button("🔴 SHED", use_container_width=True):
+    with st.spinner("Executing Shedding..."): # Visual feedback for the 2-second delay
+        if send_relay_command(False):
+            st.sidebar.warning("Relay: OFF")
+            st.rerun() # Forces the app to reload and show the 0W state
 # --- LOAD DATA ---
 df = load_data()
 if not df.empty:
@@ -103,3 +111,4 @@ if latest is not None:
         with c5:
             today_kwh = df[df['Timestamp'].dt.date == datetime.now().date()]['kWh_Interval'].sum()
             st.metric("Energy Today", f"{today_kwh:.3f} kWh")
+
