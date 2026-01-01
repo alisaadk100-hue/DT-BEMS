@@ -12,7 +12,7 @@ st.set_page_config(page_title="BEMS Digital Twin - B Block", layout="wide", init
 st_autorefresh(interval=20 * 1000, key="bems_heartbeat")
 
 # --- 2. SECRETS & URLs ---
-WEB_APP_URL = "https://script.google.com/macros/s/AKfycby3BXsDHRsuGg_01KC5xGAm4ebKnMEGinmkfxtZwuMebuR87AZzgCeidgeytVoVezFvqA/exec"
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwFyp8bGv7NwNm9Go98j3-O0twGe5oDG0fj-gzQW6nWbX2MZ2kn1u31CFE5RoCDDzl20A/exec"
 SHEET_ID = "1RSHAh23D4NPwNEU9cD5JbsMsYeZVYVTUfG64_4r-zsU"
 BEMS_LIVE_GID = "853758052" 
 ARCHIVE_GID = "0" 
@@ -216,3 +216,4 @@ elif st.session_state.page == 'Detail':
         fig = go.Figure(go.Scatter(x=day_df['Timestamp'], y=day_df[target], mode='lines', fill='tozeroy', line=dict(color='#FFAA00')))
         fig.update_layout(template="plotly_dark", dragmode=False)
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
