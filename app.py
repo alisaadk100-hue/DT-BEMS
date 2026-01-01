@@ -19,10 +19,14 @@ RELAY_ID = "bf44d7e214c9e67fa8vhoy" # Your specific Tuya Device ID
 
 # --- 3. DATA LOADING FUNCTION ---
 # Remove @st.cache_data entirely for your presentation to get LIVE data
+
+
 def load_data():
     try:
-        # Adding a random query parameter '?v=' forces Google to give you the freshest CSV
-        fresh_url = f"{SHEET_URL}&v={datetime.now().timestamp()}"
+        # The '?v=' part forces Google to bypass its 2-5 minute cache
+        cache_buster = datetime.now().strftime("%Y%m%d%H%M%S")
+        fresh_url = f"{SHEET_URL}&v={cache_buster}"
+        
         df = pd.read_csv(fresh_url, on_bad_lines='skip', engine='python', header=0)
         df.columns = [str(col).strip() for col in df.columns]
         df['Timestamp'] = pd.to_datetime(df['Timestamp'])
@@ -83,20 +87,19 @@ if col_on.button("🟢 RESTORE", use_container_width=True):
             # 1. Clear cache to prepare for new data
             st.cache_data.clear() 
             # 2. Wait for Google Script to finish its 5s post-log
-            time.sleep(6) 
+            time.sleep(18) 
             st.sidebar.success("Relay: ON")
             # 3. Force refresh the UI
             st.rerun() 
 
-if col_off.button("🔴 SHED", use_container_width=True):
-    with st.spinner("Executing Shedding..."):
+
+ if col_off.button("🔴 SHED", use_container_width=True):
+    with st.spinner("Executing Triple-Verification Shedding (18s)..."):
         if send_relay_command(False):
-            # 1. Clear cache
             st.cache_data.clear() 
-            # 2. Wait for stability
-            time.sleep(6) 
+            # Wait 18 seconds to allow the Google Script to finish all 3 logs
+            time.sleep(18) 
             st.sidebar.warning("Relay: OFF")
-            # 3. Force refresh the UI
             st.rerun()
             
 st.sidebar.markdown("---")
@@ -137,5 +140,6 @@ if latest is not None:
 else:
     st.warning("⚠️ Connecting to Digital Twin Data Stream...")
     st.info("Check your Google Sheet CSV Link if this persists.")
+
 
 
