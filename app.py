@@ -18,17 +18,17 @@ WEB_APP_URL = "https://script.google.com/macros/s/AKfycby3BXsDHRsuGg_01KC5xGAm4e
 RELAY_ID = "bf44d7e214c9e67fa8vhoy" # Your specific Tuya Device ID
 
 # --- 3. DATA LOADING FUNCTION ---
-@st.cache_data(ttl=10) # 10-second cache for responsiveness
+# Remove @st.cache_data entirely for your presentation to get LIVE data
 def load_data():
     try:
-        # Pulling CSV data from Google Sheets
-        df = pd.read_csv(SHEET_URL, on_bad_lines='skip', engine='python', header=0)
+        # Adding a random query parameter '?v=' forces Google to give you the freshest CSV
+        fresh_url = f"{SHEET_URL}&v={datetime.now().timestamp()}"
+        df = pd.read_csv(fresh_url, on_bad_lines='skip', engine='python', header=0)
         df.columns = [str(col).strip() for col in df.columns]
         df['Timestamp'] = pd.to_datetime(df['Timestamp'])
         return df
     except Exception as e:
-        return pd.DataFrame() # Return empty if sheet is offline
-
+        return pd.DataFrame()
 # --- 4. RELAY CONTROL FUNCTION ---
 
 
@@ -72,21 +72,33 @@ else:
 st.sidebar.markdown("---")
 
 # MANUAL OVERRIDE BUTTONS (Always defined here to prevent NameError)
-st.sidebar.subheader("Manual Load Shedding")
+
+# --- SIDEBAR CONTROL CENTER ---
+st.sidebar.subheader("Manual Load Control")
 col_on, col_off = st.sidebar.columns(2)
 
 if col_on.button("🟢 RESTORE", use_container_width=True):
-    with st.spinner("Switching ON..."):
+    with st.spinner("Restoring Power..."):
         if send_relay_command(True):
+            # 1. Clear cache to prepare for new data
+            st.cache_data.clear() 
+            # 2. Wait for Google Script to finish its 5s post-log
+            time.sleep(6) 
             st.sidebar.success("Relay: ON")
-            st.rerun() # Immediate refresh to show the "After" log
+            # 3. Force refresh the UI
+            st.rerun() 
 
 if col_off.button("🔴 SHED", use_container_width=True):
-    with st.spinner("Switching OFF..."):
+    with st.spinner("Executing Shedding..."):
         if send_relay_command(False):
+            # 1. Clear cache
+            st.cache_data.clear() 
+            # 2. Wait for stability
+            time.sleep(6) 
             st.sidebar.warning("Relay: OFF")
-            st.rerun() # Immediate refresh to show the "After" log
-
+            # 3. Force refresh the UI
+            st.rerun()
+            
 st.sidebar.markdown("---")
 st.sidebar.info("Note: Essential loads (Lights/Fans) are protected.")
 
@@ -125,4 +137,5 @@ if latest is not None:
 else:
     st.warning("⚠️ Connecting to Digital Twin Data Stream...")
     st.info("Check your Google Sheet CSV Link if this persists.")
+
 
