@@ -207,40 +207,51 @@ elif st.session_state.page == 'NodeDetail':
 # --- 10. GRAPH DETAIL PAGE ---
 # --- 10. GRAPH DETAIL PAGE ---
 elif st.session_state.page == 'Detail':
+    import pytz  # Ensure this is at the top of your file
+    
     target = st.session_state.selected_param
     st.button("← Back", on_click=go_to_page, args=('Home' if st.session_state.selected_node in ['MAIN', 'ARCHIVE'] else 'NodeDetail', st.session_state.selected_node))
     
     st.header(f"📈 Historical Analysis: {target}")
     
-    # Force a fresh load for the Archive to ensure current data is present
+    # 1. Force a fresh load to get the newest Jan 2nd data
     curr_df = load_data(ARCHIVE_GID) if st.session_state.selected_node == "ARCHIVE" else load_data(BEMS_LIVE_GID)
     
-    selected_date = st.date_input("Select Date", value=datetime.now().date())
+    # 2. Fix the Timezone for Lahore (PKT)
+    tz = pytz.timezone('Asia/Karachi')
+    now_pkt = datetime.now(tz).date()
     
-    # Ensure Timestamp is localized to compare with selected_date
+    # Set the default date to PKT today
+    selected_date = st.date_input("Select Date", value=now_pkt)
+    
     if not curr_df.empty:
-        day_df = curr_df[curr_df['Timestamp'].dt.date == selected_date].copy()
+        # Convert Timestamp to PKT for accurate date matching
+        curr_df['Timestamp_PKT'] = curr_df['Timestamp'].dt.tz_localize('UTC').dt.tz_convert(tz).dt.date
+        
+        day_df = curr_df[curr_df['Timestamp_PKT'] == selected_date].copy()
         
         if not day_df.empty:
-            # Main Analysis Graph
-            fig = go.Figure(go.Scatter(x=day_df['Timestamp'], y=day_df[target], 
-                                     mode='lines', fill='tozeroy', 
-                                     line=dict(color='#FFAA00', width=2)))
-            
+            fig = go.Figure(go.Scatter(
+                x=day_df['Timestamp'], 
+                y=day_df[target], 
+                mode='lines', 
+                fill='tozeroy', 
+                line=dict(color='#FFAA00', width=2)
+            ))
             fig.update_layout(
                 title=f"{target} Trend for {selected_date}",
                 template="plotly_dark", 
                 dragmode=False,
-                xaxis_title="Time of Day",
+                xaxis_title="Time (PKT)",
                 yaxis_title=f"Value ({target})",
                 height=500
             )
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             
-            # Show summary stats for the selected day
+            # Key Stats for your FYP Report
             c1, c2, c3 = st.columns(3)
-            c1.metric("Peak Value", f"{day_df[target].max():.2f}")
+            c1.metric("Peak", f"{day_df[target].max():.2f}")
             c2.metric("Average", f"{day_df[target].mean():.2f}")
-            c3.metric("Data Points", len(day_df))
+            c3.metric("Records", len(day_df))
         else:
-            st.warning(f"No data found for {selected_date}. Please check the BEMS_Live sheet.")
+            st.warning(f"No records found for {selected_date} in the {node} log.")
