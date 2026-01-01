@@ -9,7 +9,7 @@ from streamlit_autorefresh import st_autorefresh
 
 # --- 1. CONFIG & REFRESH ---
 st.set_page_config(page_title="BEMS Digital Twin - B Block", layout="wide", initial_sidebar_state="expanded")
-st_autorefresh(interval=5 * 1000, key="bems_heartbeat")
+st_autorefresh(interval=30* 1000, key="bems_heartbeat")
 
 # --- 2. SECRETS & URLs ---
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycby3BXsDHRsuGg_01KC5xGAm4ebKnMEGinmkfxtZwuMebuR87AZzgCeidgeytVoVezFvqA/exec"
@@ -168,4 +168,5 @@ if latest is not None:
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning(f"No data available for {selected_date}")
+
 
