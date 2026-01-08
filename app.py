@@ -206,15 +206,16 @@ elif st.session_state.page == 'NodeDetail':
 
 # --- 10. GRAPH DETAIL PAGE ---
 # --- 10. GRAPH DETAIL PAGE ---
+# --- 10. GRAPH DETAIL PAGE ---
 elif st.session_state.page == 'Detail':
-    import pytz  # Ensure this is at the top of your file
+    import pytz
     
     target = st.session_state.selected_param
     st.button("← Back", on_click=go_to_page, args=('Home' if st.session_state.selected_node in ['MAIN', 'ARCHIVE'] else 'NodeDetail', st.session_state.selected_node))
     
     st.header(f"📈 Historical Analysis: {target}")
     
-    # 1. Force a fresh load to get the newest Jan 2nd data
+    # 1. Force a fresh load
     curr_df = load_data(ARCHIVE_GID) if st.session_state.selected_node == "ARCHIVE" else load_data(BEMS_LIVE_GID)
     
     # 2. Fix the Timezone for Lahore (PKT)
@@ -231,13 +232,23 @@ elif st.session_state.page == 'Detail':
         day_df = curr_df[curr_df['Timestamp_PKT'] == selected_date].copy()
         
         if not day_df.empty:
-            fig = go.Figure(go.Scatter(
-                x=day_df['Timestamp'], 
-                y=day_df[target], 
-                mode='lines', 
-                fill='tozeroy', 
-                line=dict(color='#FFAA00', width=2)
-            ))
+            # --- LOGIC CHANGE: Check if target is Consumption (kWh) or Instantaneous ---
+            if "kWh" in target:
+                # Use BAR GRAPH for Energy/Consumption
+                fig = go.Figure(go.Bar(
+                    x=day_df['Timestamp'], 
+                    y=day_df[target], 
+                    marker_color='#FFAA00'
+                ))
+            else:
+                # Use LINE GRAPH for Voltage, Current, Power, Temp
+                fig = go.Figure(go.Scatter(
+                    x=day_df['Timestamp'], 
+                    y=day_df[target], 
+                    mode='lines', 
+                    line=dict(color='#FFAA00', width=2)
+                ))
+
             fig.update_layout(
                 title=f"{target} Trend for {selected_date}",
                 template="plotly_dark", 
@@ -248,10 +259,10 @@ elif st.session_state.page == 'Detail':
             )
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             
-            # Key Stats for your FYP Report
+            # Key Stats
             c1, c2, c3 = st.columns(3)
             c1.metric("Peak", f"{day_df[target].max():.2f}")
             c2.metric("Average", f"{day_df[target].mean():.2f}")
             c3.metric("Records", len(day_df))
         else:
-            st.warning(f"No records found for {selected_date} in the {node} log.")
+            st.warning(f"No records found for {selected_date} in the log.")
